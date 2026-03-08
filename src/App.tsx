@@ -510,7 +510,8 @@ if __name__ == "__main__":
                     <li className="flex gap-4">
                       <div className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0 mt-1">2</div>
                       <div className="space-y-2 w-full">
-                        <p className="text-sm text-white font-medium">Créez un fichier <code className="text-emerald-400">guardian.py</code> et collez ce code :</p>
+                        <p className="text-sm text-white font-medium">Récupérez le script <code className="text-emerald-400">guardian.py</code> :</p>
+                        <p className="text-xs text-zinc-400 mb-2">Le fichier est déjà présent à la racine de votre projet. Vous pouvez le copier ci-dessous ou le récupérer via Git.</p>
                         <div className="relative group">
                           <pre className="p-4 bg-black rounded-xl border border-white/5 text-[11px] font-mono text-zinc-400 overflow-x-auto max-h-[400px]">
                             {agentScript}
@@ -547,7 +548,11 @@ if __name__ == "__main__":
                       <p className="text-xs text-zinc-500 font-mono"># 1. Exportez d'abord vers votre GitHub via les paramètres ⚙️</p>
                       <p className="text-xs text-zinc-500 font-mono"># 2. Sur le poste Ubuntu, clonez VOTRE dépôt :</p>
                       <code className="block text-xs text-emerald-400">
-                        git clone https://github.com/VOTRE_PSEUDO/VOTRE_NOM_DE_REPO.git
+                        git clone https://github.com/VOTRE_PSEUDO/ubuntu-guardian.git
+                      </code>
+                      <p className="text-xs text-zinc-500 font-mono mt-4"># 3. Le fichier guardian.py sera déjà là !</p>
+                      <code className="block text-xs text-blue-400">
+                        cd ubuntu-guardian && python3 guardian.py
                       </code>
                     </div>
                   </div>
