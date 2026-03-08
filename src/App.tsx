@@ -541,16 +541,13 @@ if __name__ == "__main__":
                       Astuce : Déploiement sans clé USB (Git)
                     </h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">
-                      Si vous ne voulez pas utiliser de clé USB, vous pouvez mettre le script sur votre GitHub (ou Gist) :
+                      Pour récupérer le code sans clé USB, utilisez la fonction <strong>"Export to GitHub"</strong> dans les paramètres de cette application (icône ⚙️), puis clonez votre propre dépôt :
                     </p>
                     <div className="bg-black rounded-xl border border-white/5 p-4 space-y-3">
-                      <p className="text-xs text-zinc-500 font-mono"># Sur votre ordinateur (pour envoyer vers Git) :</p>
-                      <code className="block text-xs text-blue-400">
-                        git init && git add guardian.py && git commit -m "Add agent" && git push
-                      </code>
-                      <p className="text-xs text-zinc-500 font-mono mt-4"># Sur le poste Ubuntu (pour récupérer le script) :</p>
+                      <p className="text-xs text-zinc-500 font-mono"># 1. Exportez d'abord vers votre GitHub via les paramètres ⚙️</p>
+                      <p className="text-xs text-zinc-500 font-mono"># 2. Sur le poste Ubuntu, clonez VOTRE dépôt :</p>
                       <code className="block text-xs text-emerald-400">
-                        git clone https://github.com/VOTRE_NOM/VOTRE_REPO.git
+                        git clone https://github.com/VOTRE_PSEUDO/VOTRE_NOM_DE_REPO.git
                       </code>
                     </div>
                   </div>
