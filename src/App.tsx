@@ -117,7 +117,8 @@ import base64
 import os
 
 # CONFIGURATION
-APP_URL = "${window.location.origin.replace(/\/$/, '')}"
+# IMPORTANT: Utilisez l'URL publique (Shared App URL) pour que l'agent puisse communiquer
+APP_URL = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
 REPORT_ENDPOINT = f"{APP_URL}/api/report"
 BLOCKLIST_ENDPOINT = f"{APP_URL}/api/blocklist"
 INTERVAL = 30 # secondes entre chaque capture

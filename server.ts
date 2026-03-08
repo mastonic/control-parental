@@ -35,7 +35,7 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
 
   // API Routes
-  app.post("/api/report", (req, res) => {
+  app.post(["/api/report", "/api/report/"], (req, res) => {
     const { window_title, app_name, screenshot } = req.body;
     
     if (window_title || app_name) {
@@ -54,22 +54,22 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/activity", (req, res) => {
+  app.get(["/api/activity", "/api/activity/"], (req, res) => {
     const logs = db.prepare("SELECT * FROM activity ORDER BY timestamp DESC LIMIT 100").all();
     res.json(logs);
   });
 
-  app.get("/api/screenshots", (req, res) => {
+  app.get(["/api/screenshots", "/api/screenshots/"], (req, res) => {
     const screenshots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 20").all();
     res.json(screenshots);
   });
 
-  app.get("/api/blocklist", (req, res) => {
+  app.get(["/api/blocklist", "/api/blocklist/"], (req, res) => {
     const list = db.prepare("SELECT * FROM blocklist").all();
     res.json(list);
   });
 
-  app.post("/api/blocklist", (req, res) => {
+  app.post(["/api/blocklist", "/api/blocklist/"], (req, res) => {
     const { keyword } = req.body;
     if (keyword) {
       try {
@@ -79,12 +79,12 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.delete("/api/blocklist/:id", (req, res) => {
+  app.delete(["/api/blocklist/:id", "/api/blocklist/:id/"], (req, res) => {
     db.prepare("DELETE FROM blocklist WHERE id = ?").run(req.params.id);
     res.json({ status: "ok" });
   });
 
-  app.delete("/api/clear", (req, res) => {
+  app.delete(["/api/clear", "/api/clear/"], (req, res) => {
     db.prepare("DELETE FROM activity").run();
     db.prepare("DELETE FROM screenshots").run();
     res.json({ status: "ok" });

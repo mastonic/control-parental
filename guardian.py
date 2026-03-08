@@ -5,8 +5,8 @@ import base64
 import os
 
 # CONFIGURATION
-# Remplacez par l'URL de votre application si elle change
-APP_URL = "https://ais-dev-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
+# IMPORTANT: Utilisez l'URL "Shared App URL" pour que l'agent puisse communiquer depuis l'extérieur
+APP_URL = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
 REPORT_ENDPOINT = f"{APP_URL}/api/report"
 BLOCKLIST_ENDPOINT = f"{APP_URL}/api/blocklist"
 INTERVAL = 30 # secondes entre chaque capture
