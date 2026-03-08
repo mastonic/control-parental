@@ -12,7 +12,9 @@ import {
   ExternalLink,
   Info,
   Ban,
-  Plus
+  Plus,
+  Menu,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -36,6 +38,7 @@ interface BlockedItem {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'screenshots' | 'setup' | 'settings' | 'blocklist'>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [blocklist, setBlocklist] = useState<BlockedItem[]>([]);
@@ -117,10 +120,14 @@ import base64
 import os
 
 # CONFIGURATION
-# IMPORTANT: Utilisez l'URL publique (Shared App URL) pour que l'agent puisse communiquer
-APP_URL = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
-REPORT_ENDPOINT = f"{APP_URL}/api/report"
-BLOCKLIST_ENDPOINT = f"{APP_URL}/api/blocklist"
+# URL 1 : Serveur Google (Principal)
+APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
+
+# URL 2 : Serveur Local (Fallback)
+# Si le serveur est sur la MEME machine : "http://localhost:3000"
+# Si le serveur est sur une AUTRE machine : utilisez le nom d'hôte + .local
+APP_URL_LOCAL = "http://localhost:3000" 
+
 INTERVAL = 30 # secondes entre chaque capture
 BLOCK_CHECK_INTERVAL = 2 # secondes entre chaque vérification de blocage
 
@@ -145,6 +152,31 @@ def capture_screenshot():
     except:
         return None
 
+def send_request(method, endpoint, json_data=None):
+    """Tente d'envoyer la requête au Cloud, puis au Local."""
+    urls = [APP_URL_CLOUD, APP_URL_LOCAL]
+    
+    # Tentative d'ajout du nom d'hôte local
+    try:
+        import socket
+        hostname = socket.gethostname()
+        urls.append(f"http://{hostname}.local:3000")
+    except:
+        pass
+
+    for base_url in list(set(urls)):
+        try:
+            url = f"{base_url}{endpoint}"
+            if method == "POST":
+                res = requests.post(url, json=json_data, timeout=3)
+            else:
+                res = requests.get(url, timeout=3)
+            if res.status_code == 200:
+                return res
+        except:
+            continue
+    return None
+
 def report_loop():
     while True:
         try:
@@ -157,7 +189,7 @@ def report_loop():
                 "screenshot": screenshot
             }
             
-            requests.post(REPORT_ENDPOINT, json=payload)
+            send_request("POST", "/api/report", payload)
         except Exception as e:
             print(f"Report Error: {e}")
             
@@ -169,17 +201,11 @@ def block_loop():
     
     while True:
         try:
-            # Fetch blocklist every 60 seconds
             if time.time() - last_fetch > 60:
-                res = requests.get(BLOCKLIST_ENDPOINT)
-                if res.status_code == 200:
-                    try:
-                        blocklist = [item['keyword'].lower() for item in res.json()]
-                        last_fetch = time.time()
-                    except ValueError:
-                        print(f"Erreur: Le serveur n'a pas renvoyé de JSON valide à {BLOCKLIST_ENDPOINT}")
-                else:
-                    print(f"Erreur Serveur: Status {res.status_code} sur {BLOCKLIST_ENDPOINT}")
+                res = send_request("GET", "/api/blocklist")
+                if res:
+                    blocklist = [item['keyword'].lower() for item in res.json()]
+                    last_fetch = time.time()
             
             window_id, title = get_active_window_info()
             if not window_id:
@@ -187,14 +213,10 @@ def block_loop():
                 continue
                 
             title_lower = title.lower()
-            
             for keyword in blocklist:
                 if keyword in title_lower:
-                    print(f"BLOCKED: {title} (matched '{keyword}')")
-                    # Show warning message
-                    message = "Tu n'as pas le droit de regarder ce type de vidéo."
-                    subprocess.Popen(["zenity", "--warning", "--text", message, "--title", "Ubuntu Guardian", "--timeout", "10"])
-                    # Close the window
+                    print(f"BLOCKED: {title}")
+                    subprocess.Popen(["zenity", "--warning", "--text", "Accès interdit", "--timeout", "5"])
                     subprocess.run(["xdotool", "windowclose", window_id])
                     break
         except Exception as e:
@@ -205,54 +227,76 @@ def block_loop():
 if __name__ == "__main__":
     import threading
     print("Ubuntu Guardian Agent démarré...")
-    
-    # Run loops in separate threads
     threading.Thread(target=report_loop, daemon=True).start()
     block_loop()
   `.trim();
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-300 font-sans selection:bg-emerald-500/30">
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <nav className="fixed left-0 top-0 h-full w-64 bg-[#111111] border-r border-white/5 flex flex-col p-6 z-50">
-        <div className="flex items-center gap-3 mb-10 px-2">
-          <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
-            <ShieldCheck className="w-6 h-6 text-emerald-500" />
+      <nav className={`
+        fixed left-0 top-0 h-full w-64 bg-[#111111] border-r border-white/5 flex flex-col p-6 z-50 transition-transform duration-300
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <div className="flex items-center justify-between mb-10 px-2 lg:block">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
+              <ShieldCheck className="w-6 h-6 text-emerald-500" />
+            </div>
+            <div>
+              <h1 className="font-bold text-white tracking-tight">Guardian</h1>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold">Ubuntu Monitor</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-white tracking-tight">Guardian</h1>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold">Ubuntu Monitor</p>
-          </div>
+          <button 
+            onClick={() => setIsSidebarOpen(false)}
+            className="p-2 text-zinc-500 hover:text-white lg:hidden"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
         <div className="space-y-1">
           <NavItem 
             active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
             icon={<Activity className="w-4 h-4" />} 
             label="Activité" 
           />
           <NavItem 
             active={activeTab === 'screenshots'} 
-            onClick={() => setActiveTab('screenshots')} 
+            onClick={() => { setActiveTab('screenshots'); setIsSidebarOpen(false); }} 
             icon={<ImageIcon className="w-4 h-4" />} 
             label="Captures" 
           />
           <NavItem 
             active={activeTab === 'blocklist'} 
-            onClick={() => setActiveTab('blocklist')} 
+            onClick={() => { setActiveTab('blocklist'); setIsSidebarOpen(false); }} 
             icon={<Ban className="w-4 h-4" />} 
             label="Blocage" 
           />
           <NavItem 
             active={activeTab === 'setup'} 
-            onClick={() => setActiveTab('setup')} 
+            onClick={() => { setActiveTab('setup'); setIsSidebarOpen(false); }} 
             icon={<Terminal className="w-4 h-4" />} 
             label="Installation" 
           />
           <NavItem 
             active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')} 
+            onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
             icon={<Settings className="w-4 h-4" />} 
             label="Paramètres" 
           />
@@ -275,18 +319,26 @@ if __name__ == "__main__":
       </nav>
 
       {/* Main Content */}
-      <main className="pl-64 min-h-screen">
-        <header className="h-20 border-b border-white/5 flex items-center justify-between px-10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-xl z-40">
-          <h2 className="text-xl font-medium text-white capitalize">{activeTab}</h2>
+      <main className="lg:pl-64 min-h-screen">
+        <header className="h-20 border-b border-white/5 flex items-center justify-between px-6 lg:px-10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-xl z-40">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 text-zinc-500 hover:text-white lg:hidden"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <h2 className="text-xl font-medium text-white capitalize">{activeTab}</h2>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
               <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider">Connecté</span>
             </div>
           </div>
         </header>
 
-        <div className="p-10 max-w-7xl mx-auto">
+        <div className="p-6 lg:p-10 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && (
               <motion.div 
@@ -296,7 +348,7 @@ if __name__ == "__main__":
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <StatCard 
                     label="Total Logs" 
                     value={logs.length} 
@@ -367,7 +419,7 @@ if __name__ == "__main__":
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="grid grid-cols-2 lg:grid-cols-3 gap-6"
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
               >
                 {screenshots.length === 0 ? (
                   <div className="col-span-full py-20 text-center bg-[#111111] rounded-2xl border border-white/5">

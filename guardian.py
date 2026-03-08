@@ -14,6 +14,30 @@ APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west
 # Exemple : "http://mon-ordinateur.local:3000" (marche même si l'IP change via DHCP)
 APP_URL_LOCAL = "http://localhost:3000" 
 
+INTERVAL = 30 # secondes entre chaque capture
+BLOCK_CHECK_INTERVAL = 2 # secondes entre chaque vérification de blocage
+
+def get_active_window_info():
+    try:
+        # Nécessite xdotool: sudo apt install xdotool
+        window_id = subprocess.check_output(["xdotool", "getactivewindow"]).decode().strip()
+        window_title = subprocess.check_output(["xdotool", "getwindowname", window_id]).decode().strip()
+        return window_id, window_title
+    except:
+        return None, "Unknown"
+
+def capture_screenshot():
+    try:
+        # Nécessite gnome-screenshot
+        filename = "/tmp/monitor_ss.png"
+        subprocess.run(["gnome-screenshot", "-f", filename])
+        with open(filename, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        os.remove(filename)
+        return encoded_string
+    except:
+        return None
+
 def send_request(method, endpoint, json_data=None):
     """Tente d'envoyer la requête au Cloud, puis au Local (localhost et .local)."""
     # On essaie d'abord le Cloud
