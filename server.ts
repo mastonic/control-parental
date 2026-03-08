@@ -45,51 +45,53 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Request logging middleware
+  // 1. MIDDLEWARES DE BASE
+  app.use(express.json({ limit: '10mb' }));
+  
+  // Logger pour le débug
   app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
   });
 
-  app.use(express.json({ limit: '10mb' }));
+  // 2. ROUTES API (PRIORITÉ MAXIMALE)
+  app.get("/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      env: process.env.NODE_ENV || "development",
+      time: new Date().toISOString(),
+      db: db ? "connected" : "error"
+    });
+  });
 
-  // API Routes - Defined BEFORE static files
   app.get("/api/test", (req, res) => {
-    console.log("Hit /api/test");
-    res.json({ status: "ok", message: "Server is reachable", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", message: "API is working" });
+  });
+
+  app.get("/api/blocklist", (req, res) => {
+    try {
+      const list = db.prepare("SELECT * FROM blocklist").all();
+      res.json(list);
+    } catch (err) {
+      res.status(500).json({ error: "Database error" });
+    }
   });
 
   app.post("/api/report", (req, res) => {
     const { window_title, app_name, screenshot } = req.body;
-    
-    if (window_title || app_name) {
-      const stmt = db.prepare("INSERT INTO activity (window_title, app_name) VALUES (?, ?)");
-      stmt.run(window_title || "Unknown", app_name || "Unknown");
+    try {
+      if (window_title || app_name) {
+        db.prepare("INSERT INTO activity (window_title, app_name) VALUES (?, ?)")
+          .run(window_title || "Unknown", app_name || "Unknown");
+      }
+      if (screenshot) {
+        db.prepare("INSERT INTO screenshots (image_data) VALUES (?)").run(screenshot);
+        db.prepare("DELETE FROM screenshots WHERE id NOT IN (SELECT id FROM screenshots ORDER BY timestamp DESC LIMIT 50)").run();
+      }
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Report failed" });
     }
-
-    if (screenshot) {
-      const stmt = db.prepare("INSERT INTO screenshots (image_data) VALUES (?)");
-      stmt.run(screenshot);
-      
-      db.prepare("DELETE FROM screenshots WHERE id NOT IN (SELECT id FROM screenshots ORDER BY timestamp DESC LIMIT 50)").run();
-    }
-
-    res.json({ status: "ok" });
-  });
-
-  app.get("/api/activity", (req, res) => {
-    const logs = db.prepare("SELECT * FROM activity ORDER BY timestamp DESC LIMIT 100").all();
-    res.json(logs);
-  });
-
-  app.get("/api/screenshots", (req, res) => {
-    const screenshots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 20").all();
-    res.json(screenshots);
-  });
-
-  app.get("/api/blocklist", (req, res) => {
-    const list = db.prepare("SELECT * FROM blocklist").all();
-    res.json(list);
   });
 
   app.post("/api/blocklist", (req, res) => {
@@ -113,7 +115,7 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Vite middleware for development
+  // 3. VITE / STATIQUE (EN DERNIER)
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
