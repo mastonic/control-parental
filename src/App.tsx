@@ -117,7 +117,7 @@ import base64
 import os
 
 # CONFIGURATION
-APP_URL = "${window.location.origin}"
+APP_URL = "${window.location.origin.replace(/\/$/, '')}"
 REPORT_ENDPOINT = f"{APP_URL}/api/report"
 BLOCKLIST_ENDPOINT = f"{APP_URL}/api/blocklist"
 INTERVAL = 30 # secondes entre chaque capture
@@ -171,10 +171,20 @@ def block_loop():
             # Fetch blocklist every 60 seconds
             if time.time() - last_fetch > 60:
                 res = requests.get(BLOCKLIST_ENDPOINT)
-                blocklist = [item['keyword'].lower() for item in res.json()]
-                last_fetch = time.time()
+                if res.status_code == 200:
+                    try:
+                        blocklist = [item['keyword'].lower() for item in res.json()]
+                        last_fetch = time.time()
+                    except ValueError:
+                        print(f"Erreur: Le serveur n'a pas renvoyé de JSON valide à {BLOCKLIST_ENDPOINT}")
+                else:
+                    print(f"Erreur Serveur: Status {res.status_code} sur {BLOCKLIST_ENDPOINT}")
             
             window_id, title = get_active_window_info()
+            if not window_id:
+                time.sleep(BLOCK_CHECK_INTERVAL)
+                continue
+                
             title_lower = title.lower()
             
             for keyword in blocklist:
