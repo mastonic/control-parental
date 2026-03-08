@@ -7,36 +7,56 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("monitor.db");
+let db: any;
+try {
+  db = new Database("monitor.db");
+  console.log("Database initialized successfully");
+} catch (err) {
+  console.error("Failed to initialize database:", err);
+  // Fallback to in-memory if disk is not writable (though it should be)
+  db = new Database(":memory:");
+  console.log("Using in-memory database fallback");
+}
 
 // Initialize database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS activity (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    window_title TEXT,
-    app_name TEXT
-  );
-  CREATE TABLE IF NOT EXISTS screenshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    image_data TEXT
-  );
-  CREATE TABLE IF NOT EXISTS blocklist (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    keyword TEXT UNIQUE
-  );
-`);
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS activity (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      window_title TEXT,
+      app_name TEXT
+    );
+    CREATE TABLE IF NOT EXISTS screenshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      image_data TEXT
+    );
+    CREATE TABLE IF NOT EXISTS blocklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      keyword TEXT UNIQUE
+    );
+  `);
+} catch (err) {
+  console.error("Failed to run migrations:", err);
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Request logging middleware
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+  });
+
   app.use(express.json({ limit: '10mb' }));
 
-  // API Routes
+  // API Routes - Defined BEFORE static files
   app.get("/api/test", (req, res) => {
-    res.json({ status: "ok", message: "Server is reachable" });
+    console.log("Hit /api/test");
+    res.json({ status: "ok", message: "Server is reachable", timestamp: new Date().toISOString() });
   });
 
   app.post("/api/report", (req, res) => {
