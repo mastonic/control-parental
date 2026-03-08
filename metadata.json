@@ -1,0 +1,5 @@
+{
+  "name": "Ubuntu Guardian",
+  "description": "Outil de surveillance parentale pour postes Linux Ubuntu sur le même réseau.",
+  "requestFramePermissions": []
+}
