@@ -557,6 +557,26 @@ if __name__ == "__main__":
                       </code>
                     </div>
                   </div>
+
+                  <div className="mt-10 pt-10 border-t border-white/5 space-y-4">
+                    <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-blue-400" />
+                      Mode Réseau Local (Fallback)
+                    </h3>
+                    <p className="text-sm text-zinc-400 leading-relaxed">
+                      Si le serveur Google est indisponible, vous pouvez faire tourner le serveur sur votre propre réseau :
+                    </p>
+                    <div className="bg-black rounded-xl border border-white/5 p-4 space-y-3">
+                      <p className="text-xs text-zinc-500 font-mono"># 1. Sur votre machine locale (PC ou Ubuntu) :</p>
+                      <code className="block text-xs text-blue-400">
+                        npm install && npm run dev
+                      </code>
+                      <p className="text-xs text-zinc-500 font-mono mt-4"># 2. Dans guardian.py, modifiez l'URL locale :</p>
+                      <code className="block text-xs text-emerald-400">
+                        APP_URL_LOCAL = "http://192.168.1.XX:3000"
+                      </code>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
