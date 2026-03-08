@@ -571,9 +571,12 @@ if __name__ == "__main__":
                       <code className="block text-xs text-blue-400">
                         npm install && npm run dev
                       </code>
-                      <p className="text-xs text-zinc-500 font-mono mt-4"># 2. Dans guardian.py, modifiez l'URL locale :</p>
+                      <p className="text-xs text-zinc-500 font-mono mt-4"># 2. Astuce DHCP : Utilisez le nom d'hôte au lieu de l'IP</p>
+                      <p className="text-[11px] text-zinc-400 italic">
+                        Si l'IP change souvent, utilisez le nom de votre PC suivi de .local
+                      </p>
                       <code className="block text-xs text-emerald-400">
-                        APP_URL_LOCAL = "http://192.168.1.XX:3000"
+                        APP_URL_LOCAL = "http://NOM-DE-VOTRE-PC.local:3000"
                       </code>
                     </div>
                   </div>

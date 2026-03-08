@@ -8,21 +8,44 @@ import os
 # URL 1 : Serveur Google (Principal)
 APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
 
-# URL 2 : Serveur Local (Fallback - ex: l'IP de votre ordi sur le WiFi)
-# Remplacez par l'IP locale si vous faites tourner le serveur chez vous
+# URL 2 : Serveur Local (Fallback)
+# Si le serveur est sur la MEME machine : "http://localhost:3000"
+# Si le serveur est sur une AUTRE machine : utilisez le nom d'hôte + .local
+# Exemple : "http://mon-ordinateur.local:3000" (marche même si l'IP change via DHCP)
 APP_URL_LOCAL = "http://localhost:3000" 
 
 def send_request(method, endpoint, json_data=None):
-    """Tente d'envoyer la requête au Cloud, puis au Local en cas d'échec."""
-    urls = [APP_URL_CLOUD, APP_URL_LOCAL]
-    for base_url in urls:
+    """Tente d'envoyer la requête au Cloud, puis au Local (localhost et .local)."""
+    # On essaie d'abord le Cloud
+    try:
+        url = f"{APP_URL_CLOUD}{endpoint}"
+        if method == "POST":
+            res = requests.post(url, json=json_data, timeout=3)
+        else:
+            res = requests.get(url, timeout=3)
+        if res.status_code == 200:
+            return res
+    except:
+        pass
+
+    # Si échec, on tente le réseau local (DHCP friendly via .local ou localhost)
+    potential_locals = [APP_URL_LOCAL, "http://localhost:3000"]
+    
+    # On essaie aussi de deviner le nom de la machine si on est sur Ubuntu
+    try:
+        import socket
+        hostname = socket.gethostname()
+        potential_locals.append(f"http://{hostname}.local:3000")
+    except:
+        pass
+
+    for base_url in list(set(potential_locals)): # Supprime les doublons
         try:
             url = f"{base_url}{endpoint}"
             if method == "POST":
-                res = requests.post(url, json=json_data, timeout=5)
+                res = requests.post(url, json=json_data, timeout=2)
             else:
-                res = requests.get(url, timeout=5)
-            
+                res = requests.get(url, timeout=2)
             if res.status_code == 200:
                 return res
         except:
