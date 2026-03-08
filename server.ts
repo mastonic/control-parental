@@ -3,6 +3,11 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,6 +123,12 @@ async function startServer() {
   // 3. VITE / STATIQUE (EN DERNIER)
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
+      configFile: false,
+      root: process.cwd(),
+      plugins: [react(), tailwindcss()],
+      define: {
+        'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY),
+      },
       server: { middlewareMode: true },
       appType: "spa",
     });
