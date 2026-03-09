@@ -192,55 +192,77 @@ fi
 # ============================================================
 step "Étape 5/8 — Service Dashboard (systemd)"
 
-# Trouver le chemin complet de node et npm
+# Trouver le chemin complet de node
 NODE_PATH=$(which node)
-NPX_PATH=$(which npx)
-NPM_PATH=$(which npm)
+info "Node.js trouvé : $NODE_PATH"
 
+# S'assurer que tsx est exécutable
+TSX_BIN="$INSTALL_DIR/node_modules/.bin/tsx"
+if [ -f "$TSX_BIN" ]; then
+    sudo chmod +x "$TSX_BIN" 2>/dev/null || true
+    ok "tsx rendu exécutable"
+else
+    warn "tsx introuvable dans node_modules, tentative de réinstallation..."
+    cd "$INSTALL_DIR"
+    sudo npm install tsx --save-dev --silent 2>/dev/null || true
+    sudo chmod +x "$TSX_BIN" 2>/dev/null || true
+fi
+
+# S'assurer que TOUS les binaires dans node_modules/.bin sont exécutables
+sudo chmod +x "$INSTALL_DIR/node_modules/.bin/"* 2>/dev/null || true
+
+# Créer un script wrapper pour démarrer le serveur (plus fiable que d'appeler tsx directement)
+sudo tee "$INSTALL_DIR/start-server.sh" > /dev/null << 'WRAPPEREOF'
+#!/bin/bash
+cd /opt/guardian
+export NODE_ENV=development
+# Charger .env si présent
+[ -f .env ] && export $(grep -v '^#' .env | xargs) 2>/dev/null
+exec node node_modules/.bin/tsx server.ts
+WRAPPEREOF
+sudo chmod +x "$INSTALL_DIR/start-server.sh"
+
+# Créer le service systemd
 sudo tee /etc/systemd/system/guardian-dashboard.service > /dev/null << SERVICEEOF
 [Unit]
 Description=Guardian Parental Dashboard
 After=network.target
-Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$NODE_PATH $INSTALL_DIR/node_modules/.bin/tsx $INSTALL_DIR/server.ts
+ExecStart=/bin/bash $INSTALL_DIR/start-server.sh
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=development
 Environment=PORT=$SERVER_PORT
-EnvironmentFile=-$INSTALL_DIR/.env
-
-# Sécurité
-ProtectSystem=strict
-ReadWritePaths=$INSTALL_DIR
-NoNewPrivileges=false
 
 [Install]
 WantedBy=multi-user.target
 SERVICEEOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable guardian-dashboard.service
-sudo systemctl restart guardian-dashboard.service
-sleep 3
+sudo systemctl enable guardian-dashboard.service 2>/dev/null || true
+sudo systemctl restart guardian-dashboard.service 2>/dev/null || true
+sleep 4
 
 if sudo systemctl is-active --quiet guardian-dashboard.service; then
     ok "Service Dashboard actif et démarré"
 else
-    warn "Le service n'a pas démarré, tentative alternative..."
-    # Fallback : lancer directement
-    cd "$INSTALL_DIR"
+    warn "Service systemd échoué, démarrage en mode direct..."
+    # Voir pourquoi ça a échoué
+    sudo journalctl -u guardian-dashboard.service --no-pager -n 5 2>/dev/null || true
+    
+    # Fallback : lancer directement avec bash
     sudo fuser -k $SERVER_PORT/tcp 2>/dev/null || true
     sleep 1
-    sudo nohup $NODE_PATH "$INSTALL_DIR/node_modules/.bin/tsx" "$INSTALL_DIR/server.ts" > /tmp/guardian-server.log 2>&1 &
-    sleep 2
-    if fuser $SERVER_PORT/tcp &>/dev/null; then
-        ok "Dashboard démarré (mode fallback)"
+    cd "$INSTALL_DIR"
+    sudo bash -c "cd $INSTALL_DIR && $NODE_PATH node_modules/.bin/tsx server.ts > /tmp/guardian-server.log 2>&1 &"
+    sleep 3
+    if fuser $SERVER_PORT/tcp &>/dev/null 2>&1 || curl -s "http://localhost:$SERVER_PORT/api/health" | grep -q "ok" 2>/dev/null; then
+        ok "Dashboard démarré (mode direct)"
     else
-        warn "Dashboard non démarré — vérifiez : sudo journalctl -u guardian-dashboard"
+        warn "Dashboard non démarré — consultez : cat /tmp/guardian-server.log"
     fi
 fi
 
