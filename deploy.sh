@@ -171,7 +171,7 @@ fi
 # ============================================================
 # ÉTAPE 4 : Dépendances Node.js
 # ============================================================
-step "Étape 4/8 — Dépendances Node.js"
+step "Étape 4/8 — Dépendances Node.js + Build"
 
 cd "$INSTALL_DIR"
 sudo npm install --silent 2>/dev/null
@@ -185,6 +185,17 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
         echo "# Guardian" | sudo tee "$INSTALL_DIR/.env" > /dev/null
     fi
     ok "Fichier .env créé"
+fi
+
+# Compiler le frontend pour la production (vite build)
+info "Compilation du frontend (vite build)..."
+sudo chmod +x "$INSTALL_DIR/node_modules/.bin/"* 2>/dev/null || true
+cd "$INSTALL_DIR"
+sudo npx vite build 2>/dev/null || sudo node node_modules/.bin/vite build 2>/dev/null
+if [ -d "$INSTALL_DIR/dist" ]; then
+    ok "Frontend compilé (dossier dist/ créé)"
+else
+    warn "Build échoué — le dashboard risque de ne pas s'afficher"
 fi
 
 # ============================================================
@@ -215,7 +226,7 @@ sudo chmod +x "$INSTALL_DIR/node_modules/.bin/"* 2>/dev/null || true
 sudo tee "$INSTALL_DIR/start-server.sh" > /dev/null << 'WRAPPEREOF'
 #!/bin/bash
 cd /opt/guardian
-export NODE_ENV=development
+export NODE_ENV=production
 # Charger .env si présent
 [ -f .env ] && export $(grep -v '^#' .env | xargs) 2>/dev/null
 exec node node_modules/.bin/tsx server.ts
@@ -234,7 +245,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=/bin/bash $INSTALL_DIR/start-server.sh
 Restart=always
 RestartSec=5
-Environment=NODE_ENV=development
+Environment=NODE_ENV=production
 Environment=PORT=$SERVER_PORT
 
 [Install]
