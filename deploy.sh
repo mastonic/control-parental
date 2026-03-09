@@ -187,15 +187,14 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
     ok "Fichier .env créé"
 fi
 
-# Compiler le frontend pour la production (vite build)
-info "Compilation du frontend (vite build)..."
-sudo chmod +x "$INSTALL_DIR/node_modules/.bin/"* 2>/dev/null || true
-cd "$INSTALL_DIR"
-sudo npx vite build 2>/dev/null || sudo node node_modules/.bin/vite build 2>/dev/null
+# Le frontend est pré-compilé et inclus dans le repo (dist/)
 if [ -d "$INSTALL_DIR/dist" ]; then
-    ok "Frontend compilé (dossier dist/ créé)"
+    ok "Frontend pré-compilé trouvé (dist/)"
 else
-    warn "Build échoué — le dashboard risque de ne pas s'afficher"
+    warn "Dossier dist/ manquant — tentative de build..."
+    cd "$INSTALL_DIR"
+    sudo chmod +x "$INSTALL_DIR/node_modules/.bin/"* 2>/dev/null || true
+    sudo node node_modules/.bin/vite build 2>/dev/null || warn "Build échoué"
 fi
 
 # ============================================================

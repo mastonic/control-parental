@@ -1,6 +1,6 @@
 node_modules/
 build/
-dist/
+# dist/ is tracked so deploy doesn't need to build
 coverage/
 .DS_Store
 *.log
