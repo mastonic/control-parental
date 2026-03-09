@@ -1,44 +1,140 @@
+#!/usr/bin/env python3
+"""
+🛡️ Guardian Agent — Contrôle Parental pour Ubuntu Linux
+=========================================================
+Ce script tourne en arrière-plan sur le PC de l'enfant.
+Il capture l'activité (titre de fenêtre + screenshot) et l'envoie
+au dashboard parent. Il bloque aussi les contenus interdits.
+
+INSTALLATION sur le PC de l'enfant :
+  1. sudo apt install xdotool gnome-screenshot zenity python3-requests
+  2. Copier ce fichier sur le PC
+  3. python3 guardian.py --install   (pour l'auto-démarrage)
+  4. Redémarrer le PC
+
+DÉSINSTALLATION :
+  python3 guardian.py --uninstall
+"""
+
 import subprocess
 import time
 import requests
 import base64
 import os
+import sys
 import re
+import signal
+import json
+from datetime import datetime
+from pathlib import Path
 
-# CONFIGURATION
-# URL 1 : Serveur Google (Principal)
+# ============================================================
+# CONFIGURATION — À MODIFIER SELON VOTRE RÉSEAU
+# ============================================================
+
+# URL du serveur Dashboard (celui que le parent consulte)
+# Option 1: Cloud Google (accessible partout)
 APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
 
-# URL 2 : Serveur Local (Fallback)
-# Si le serveur est sur la MEME machine : "http://localhost:3000"
-# Si le serveur est sur une AUTRE machine : utilisez le nom d'hôte + .local
-# Exemple : "http://mon-ordinateur.local:3000" (marche même si l'IP change via DHCP)
-APP_URL_LOCAL = "http://weedleay.local:3000" 
+# Option 2: Réseau local (quand cloud indisponible)
+# Utilisez le nom d'hôte .local pour résister aux changements DHCP
+APP_URL_LOCAL = "http://weedleay.local:3000"
 
-INTERVAL = 30 # secondes entre chaque capture
-BLOCK_CHECK_INTERVAL = 2 # secondes entre chaque vérification de blocage
+# Intervalles
+INTERVAL = 30           # Secondes entre chaque rapport (capture + titre)
+BLOCK_CHECK_INTERVAL = 2 # Secondes entre chaque vérification de blocage
+BLOCKLIST_REFRESH = 60   # Secondes entre chaque mise à jour de la blocklist
 
-def detect_environment():
-    """Détecte si on est sur X11, Wayland, ou Crostini."""
-    session = os.environ.get("XDG_SESSION_TYPE", "").lower()
-    # Check if inside Crostini (ChromeOS Linux)
-    is_crostini = os.path.exists("/dev/.cros_milestone") or "penguin" in os.environ.get("HOSTNAME", "")
+# Nom de l'enfant (apparaîtra dans les rapports)
+CHILD_NAME = "Enfant"
+
+# ============================================================
+# NE PAS MODIFIER EN DESSOUS (sauf si vous savez ce que vous faites)
+# ============================================================
+
+AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
+AUTOSTART_FILE = os.path.join(AUTOSTART_DIR, "guardian-parental.desktop")
+SCRIPT_PATH = os.path.abspath(__file__)
+LOG_FILE = os.path.expanduser("~/.guardian.log")
+
+def log(message):
+    """Log avec timestamp."""
+    ts = datetime.now().strftime("%H:%M:%S")
+    line = f"[{ts}] {message}"
+    print(line)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+        # Garder le log à taille raisonnable (max 1000 lignes)
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+        if len(lines) > 1000:
+            with open(LOG_FILE, "w") as f:
+                f.writelines(lines[-500:])
+    except:
+        pass
+
+
+# ============================================================
+# INSTALLATION / DÉSINSTALLATION AUTO-START
+# ============================================================
+
+def install_autostart():
+    """Installe le démarrage automatique au login de l'enfant."""
+    os.makedirs(AUTOSTART_DIR, exist_ok=True)
     
-    if is_crostini:
-        return "crostini"
-    elif session == "x11":
-        return "x11"
-    elif session == "wayland":
-        return "wayland"
-    return "unknown"
+    desktop_entry = f"""[Desktop Entry]
+Type=Application
+Name=Guardian Parental Monitor
+Comment=Surveillance parentale
+Exec=/usr/bin/python3 {SCRIPT_PATH}
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5
+"""
+    with open(AUTOSTART_FILE, "w") as f:
+        f.write(desktop_entry)
+    
+    # Rendre le fichier non supprimable par l'enfant (nécessite sudo)
+    print("✅ Auto-démarrage installé !")
+    print(f"   Fichier : {AUTOSTART_FILE}")
+    print(f"   Script  : {SCRIPT_PATH}")
+    print()
+    print("🔒 Pour protéger contre la suppression (optionnel, nécessite sudo) :")
+    print(f"   sudo chattr +i {AUTOSTART_FILE}")
+    print(f"   sudo chattr +i {SCRIPT_PATH}")
+    print()
+    print("📋 Pour vérifier que tout fonctionne :")
+    print("   1. Redémarrez le PC de l'enfant")
+    print("   2. Guardian démarrera automatiquement à la connexion")
+    print("   3. Vérifiez le dashboard parent pour voir les rapports")
 
-ENV_TYPE = detect_environment()
-print(f"Environnement détecté : {ENV_TYPE}")
+
+def uninstall_autostart():
+    """Supprime le démarrage automatique."""
+    try:
+        # Retirer la protection si elle existe
+        subprocess.run(["sudo", "chattr", "-i", AUTOSTART_FILE], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "chattr", "-i", SCRIPT_PATH], stderr=subprocess.DEVNULL)
+    except:
+        pass
+    
+    if os.path.exists(AUTOSTART_FILE):
+        os.remove(AUTOSTART_FILE)
+        print("✅ Auto-démarrage supprimé.")
+    else:
+        print("ℹ️  Aucun auto-démarrage trouvé.")
+
+
+# ============================================================
+# DÉTECTION DE FENÊTRE ACTIVE
+# ============================================================
 
 def get_active_window_info():
-    """Récupère le titre de la fenêtre active selon l'environnement."""
+    """Récupère l'ID et le titre de la fenêtre active (X11/Ubuntu)."""
     
-    # Méthode 1 : xdotool (X11 natif)
+    # Méthode principale : xdotool (fonctionne sur Ubuntu X11)
     try:
         window_id = subprocess.check_output(
             ["xdotool", "getactivewindow"], stderr=subprocess.DEVNULL
@@ -46,175 +142,140 @@ def get_active_window_info():
         window_title = subprocess.check_output(
             ["xdotool", "getwindowname", window_id], stderr=subprocess.DEVNULL
         ).decode().strip()
-        if window_title and window_title != "(has no name)":
+        if window_title:
             return window_id, window_title
     except:
         pass
 
-    # Méthode 2 : xprop (compatible XWayland / Sommelier / Crostini)
+    # Fallback : xprop
     try:
-        # Lister toutes les fenêtres via xwininfo
-        output = subprocess.check_output(
-            ["xwininfo", "-root", "-tree"], stderr=subprocess.DEVNULL
+        active = subprocess.check_output(
+            ["xprop", "-root", "_NET_ACTIVE_WINDOW"], stderr=subprocess.DEVNULL
         ).decode()
-        
-        # Trouver les fenêtres avec un nom (ignorer "has no name" et les petites)
-        window_titles = []
-        for line in output.split('\n'):
-            # Chercher les lignes avec un nom entre guillemets et une taille raisonnable
-            match = re.search(r'(0x[0-9a-f]+)\s+"([^"]+)".*?(\d+)x(\d+)', line)
-            if match:
-                wid = match.group(1)
-                name = match.group(2)
-                w = int(match.group(3))
-                h = int(match.group(4))
-                # Ignorer les fenêtres minuscules et Sommelier/window manager
-                if w > 100 and h > 100 and name not in ("Sommelier", "has no name", ""):
-                    window_titles.append((wid, name))
-        
-        if window_titles:
-            # Prendre la dernière fenêtre (généralement la plus récente/au premier plan)
-            return window_titles[-1]
+        match = re.search(r'window id # (0x[0-9a-fA-F]+)', active)
+        if match:
+            wid = match.group(1)
+            name_output = subprocess.check_output(
+                ["xprop", "-id", wid, "WM_NAME"], stderr=subprocess.DEVNULL
+            ).decode()
+            name_match = re.search(r'"(.+)"', name_output)
+            if name_match:
+                return wid, name_match.group(1)
     except:
         pass
 
-    # Méthode 3 : Lire /proc pour les processus en premier plan
+    # Fallback : liste des processus graphiques connus
     try:
-        # Trouver les processus graphiques courants
         ps_output = subprocess.check_output(
-            ["ps", "-eo", "pid,comm", "--sort=-etime"], stderr=subprocess.DEVNULL
-        ).decode()
+            ["ps", "-eo", "comm"], stderr=subprocess.DEVNULL
+        ).decode().lower()
         
         known_apps = {
-            "chrome": "Google Chrome",
-            "chromium": "Chromium",
-            "firefox": "Firefox",
-            "code": "VS Code",
-            "gnome-terminal": "Terminal",
-            "nautilus": "Fichiers",
-            "libreoffice": "LibreOffice",
-            "vlc": "VLC Media Player",
-            "steam": "Steam",
+            "chrome": "Google Chrome", "chromium": "Chromium",
+            "firefox": "Firefox", "code": "VS Code",
+            "gnome-terminal": "Terminal", "nautilus": "Fichiers",
+            "libreoffice": "LibreOffice", "vlc": "VLC",
+            "steam": "Steam", "minecraft": "Minecraft",
         }
-        
-        for proc_name, display_name in known_apps.items():
-            if proc_name in ps_output.lower():
-                return None, f"{display_name} (détecté via processus)"
+        for proc, name in known_apps.items():
+            if proc in ps_output:
+                return None, f"{name} (processus détecté)"
     except:
         pass
 
-    return None, "Chromebook Desktop"
+    return None, "Bureau Ubuntu"
 
+
+# ============================================================
+# CAPTURE D'ÉCRAN
+# ============================================================
 
 def capture_screenshot():
-    """Capture d'écran compatible avec plusieurs environnements."""
-    filename = "/tmp/monitor_ss.png"
+    """Capture d'écran du bureau de l'enfant."""
+    filename = "/tmp/guardian_capture.png"
+    
+    # Nettoyer l'ancienne capture
+    if os.path.exists(filename):
+        try:
+            os.remove(filename)
+        except:
+            pass
 
-    # Méthode 1 : gnome-screenshot 
-    try:
-        result = subprocess.run(
+    methods = [
+        # Méthode 1 : gnome-screenshot (meilleure qualité sur GNOME)
+        lambda: subprocess.run(
             ["gnome-screenshot", "-f", filename],
-            stderr=subprocess.DEVNULL, timeout=5
-        )
-        if result.returncode == 0 and os.path.exists(filename):
-            with open(filename, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-            os.remove(filename)
-            return encoded
-    except:
-        pass
-
-    # Méthode 2 : import (ImageMagick)
-    try:
-        result = subprocess.run(
-            ["import", "-window", "root", filename],
-            stderr=subprocess.DEVNULL, timeout=10
-        )
-        if result.returncode == 0 and os.path.exists(filename):
-            with open(filename, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-            os.remove(filename)
-            return encoded
-    except:
-        pass
-
-    # Méthode 3 : scrot
-    try:
-        result = subprocess.run(
+            stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10
+        ),
+        # Méthode 2 : scrot
+        lambda: subprocess.run(
             ["scrot", filename],
-            stderr=subprocess.DEVNULL, timeout=5
-        )
-        if result.returncode == 0 and os.path.exists(filename):
-            with open(filename, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-            os.remove(filename)
-            return encoded
-    except:
-        pass
+            stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10
+        ),
+        # Méthode 3 : import (ImageMagick)
+        lambda: subprocess.run(
+            ["import", "-window", "root", filename],
+            stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=15
+        ),
+    ]
 
-    # Méthode 4 : xwd + convert (très basique, souvent disponible)
-    try:
-        xwd_file = "/tmp/monitor_ss.xwd"
-        subprocess.run(
-            ["xwd", "-root", "-out", xwd_file],
-            stderr=subprocess.DEVNULL, timeout=10
-        )
-        subprocess.run(
-            ["convert", xwd_file, filename],
-            stderr=subprocess.DEVNULL, timeout=10
-        )
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-            os.remove(filename)
-            if os.path.exists(xwd_file):
-                os.remove(xwd_file)
-            return encoded
-    except:
-        pass
+    for method in methods:
+        try:
+            method()
+            if os.path.exists(filename) and os.path.getsize(filename) > 100:
+                with open(filename, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode('utf-8')
+                os.remove(filename)
+                return encoded
+        except:
+            continue
 
     return None
 
 
-def send_request(method, endpoint, json_data=None):
-    """Tente d'envoyer la requête au Cloud, puis au Local (localhost et .local)."""
-    # On essaie d'abord le Cloud
-    try:
-        url = f"{APP_URL_CLOUD}{endpoint}"
-        if method == "POST":
-            res = requests.post(url, json=json_data, timeout=3)
-        else:
-            res = requests.get(url, timeout=3)
-        if res.status_code == 200:
-            return res
-    except:
-        pass
+# ============================================================
+# COMMUNICATION SERVEUR
+# ============================================================
 
-    # Si échec, on tente le réseau local (DHCP friendly via .local ou localhost)
-    potential_locals = [APP_URL_LOCAL, "http://localhost:3000"]
+def send_request(method, endpoint, json_data=None):
+    """Envoie une requête au serveur Dashboard (Cloud puis Local)."""
     
-    # On essaie aussi de deviner le nom de la machine si on est sur Ubuntu
+    urls_to_try = [APP_URL_CLOUD, APP_URL_LOCAL, "http://localhost:3000"]
+    
+    # Ajouter le hostname .local
     try:
         import socket
         hostname = socket.gethostname()
-        potential_locals.append(f"http://{hostname}.local:3000")
+        urls_to_try.append(f"http://{hostname}.local:3000")
     except:
         pass
 
-    for base_url in list(set(potential_locals)): # Supprime les doublons
+    for base_url in list(dict.fromkeys(urls_to_try)):  # Supprime doublons, garde l'ordre
         try:
             url = f"{base_url}{endpoint}"
             if method == "POST":
-                res = requests.post(url, json=json_data, timeout=2)
+                res = requests.post(url, json=json_data, timeout=5)
             else:
-                res = requests.get(url, timeout=2)
+                res = requests.get(url, timeout=5)
             if res.status_code == 200:
                 return res
+        except requests.exceptions.ConnectionError:
+            continue
+        except requests.exceptions.Timeout:
+            continue
         except:
             continue
     return None
 
+
+# ============================================================
+# BOUCLE DE RAPPORT (capture + envoi)
+# ============================================================
+
 def report_loop():
+    """Boucle principale : capture et envoie l'activité au dashboard parent."""
+    consecutive_failures = 0
+    
     while True:
         try:
             _, title = get_active_window_info()
@@ -222,102 +283,178 @@ def report_loop():
             
             payload = {
                 "window_title": title,
-                "app_name": "Chromebook" if ENV_TYPE == "crostini" else "Ubuntu Desktop",
+                "app_name": f"Ubuntu ({CHILD_NAME})",
                 "screenshot": screenshot
             }
             
             res = send_request("POST", "/api/report", payload)
             if res:
-                ss_status = "avec capture" if screenshot else "sans capture"
-                print(f"✓ Report envoyé ({ss_status}): {title}")
+                ss_info = f"+ capture ({len(screenshot)//1024}KB)" if screenshot else "sans capture"
+                log(f"✓ Rapport envoyé ({ss_info}) : {title[:60]}")
+                consecutive_failures = 0
             else:
-                print(f"✗ Échec d'envoi: {title}")
+                consecutive_failures += 1
+                if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
+                    log(f"✗ Échec d'envoi (tentative {consecutive_failures}) : {title[:40]}")
         except Exception as e:
-            print(f"Report Error: {e}")
+            log(f"Erreur rapport : {e}")
             
         time.sleep(INTERVAL)
 
+
+# ============================================================
+# BOUCLE DE BLOCAGE (ferme les fenêtres interdites)
+# ============================================================
+
 def block_loop():
+    """Vérifie en continu si le contenu affiché est interdit."""
     blocklist = []
     last_fetch = 0
     
     while True:
         try:
-            if time.time() - last_fetch > 60:
+            # Mettre à jour la blocklist périodiquement
+            if time.time() - last_fetch > BLOCKLIST_REFRESH:
                 res = send_request("GET", "/api/blocklist")
                 if res:
-                    blocklist = [item['keyword'].lower() for item in res.json()]
+                    new_blocklist = [item['keyword'].lower() for item in res.json()]
+                    if new_blocklist != blocklist:
+                        blocklist = new_blocklist
+                        if blocklist:
+                            log(f"📋 Blocklist ({len(blocklist)} tags) : {', '.join(blocklist[:5])}{'...' if len(blocklist)>5 else ''}")
                     last_fetch = time.time()
-                    if blocklist:
-                        print(f"📋 Blocklist mise à jour : {blocklist}")
             
+            if not blocklist:
+                time.sleep(BLOCK_CHECK_INTERVAL)
+                continue
+
             window_id, title = get_active_window_info()
-            if not window_id:
+            if not window_id or not title:
                 time.sleep(BLOCK_CHECK_INTERVAL)
                 continue
                 
             title_lower = title.lower()
             for keyword in blocklist:
                 if keyword in title_lower:
-                    print(f"🚫 BLOQUÉ : {title}")
-                    # Essayer zenity pour l'alerte
-                    try:
-                        subprocess.Popen(
-                            ["zenity", "--warning", "--text", f"Accès interdit\n\nContenu bloqué: {keyword}", "--timeout", "5"],
-                            stderr=subprocess.DEVNULL
-                        )
-                    except:
-                        print(f"   (zenity non disponible pour l'alerte)")
+                    log(f"🚫 BLOQUÉ : '{keyword}' trouvé dans '{title[:50]}'")
                     
-                    # Essayer de fermer la fenêtre
+                    # Alerte visuelle adaptée à un enfant
+                    try:
+                        subprocess.Popen([
+                            "zenity", "--warning",
+                            "--title=⛔ Accès Bloqué",
+                            "--text=Ce contenu n'est pas autorisé.\n\nDemande à tes parents si tu veux y accéder.",
+                            "--width=400",
+                            "--timeout=10"
+                        ], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                    except:
+                        pass
+                    
+                    # Fermer la fenêtre
                     try:
                         subprocess.run(
                             ["xdotool", "windowclose", window_id],
                             stderr=subprocess.DEVNULL, timeout=3
                         )
                     except:
-                        print(f"   (impossible de fermer la fenêtre automatiquement)")
+                        # Tentative alternative : wmctrl
+                        try:
+                            subprocess.run(
+                                ["wmctrl", "-ic", window_id],
+                                stderr=subprocess.DEVNULL, timeout=3
+                            )
+                        except:
+                            pass
+                    
+                    # Petite pause pour éviter les boucles rapides
+                    time.sleep(1)
                     break
+                    
         except Exception as e:
-            print(f"Block Error: {e}")
+            log(f"Erreur blocage : {e}")
             
         time.sleep(BLOCK_CHECK_INTERVAL)
 
+
+# ============================================================
+# POINT D'ENTRÉE
+# ============================================================
+
 if __name__ == "__main__":
+    # Gestion des arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--install":
+            install_autostart()
+            sys.exit(0)
+        elif sys.argv[1] == "--uninstall":
+            uninstall_autostart()
+            sys.exit(0)
+        elif sys.argv[1] == "--help":
+            print("🛡️  Guardian — Contrôle Parental Ubuntu")
+            print()
+            print("Usage:")
+            print("  python3 guardian.py              Lancer le monitoring")
+            print("  python3 guardian.py --install     Installer le démarrage auto")
+            print("  python3 guardian.py --uninstall   Supprimer le démarrage auto")
+            print("  python3 guardian.py --test        Tester toutes les fonctions")
+            sys.exit(0)
+        elif sys.argv[1] == "--test":
+            print("🧪 Test des fonctionnalités...")
+            print()
+            
+            print("1. Connexion serveur...")
+            test = send_request("GET", "/api/health")
+            print(f"   {'✅ OK' if test else '❌ Échec'}")
+            
+            print("2. Détection fenêtre...")
+            wid, title = get_active_window_info()
+            print(f"   {'✅' if title != 'Bureau Ubuntu' else '⚠️ '} Titre: {title}")
+            
+            print("3. Capture d'écran...")
+            ss = capture_screenshot()
+            print(f"   {'✅ OK' if ss else '❌ Échec'} {f'({len(ss)//1024}KB)' if ss else ''}")
+            
+            print("4. Blocklist...")
+            bl = send_request("GET", "/api/blocklist")
+            if bl:
+                items = bl.json()
+                print(f"   ✅ {len(items)} tags bloqués")
+            else:
+                print("   ❌ Impossible de récupérer la blocklist")
+            
+            print()
+            print("💡 Si xdotool échoue, installez-le :")
+            print("   sudo apt install xdotool gnome-screenshot zenity")
+            sys.exit(0)
+    
+    # Ignorer SIGHUP pour survivre à la fermeture du terminal
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    
     import threading
     
-    print("=" * 50)
-    print("🛡️  Guardian Agent démarré")
-    print(f"📍 Environnement : {ENV_TYPE}")
-    print(f"🌐 Cloud : {APP_URL_CLOUD}")
-    print(f"🏠 Local : {APP_URL_LOCAL}")
-    print(f"⏱️  Intervalle : {INTERVAL}s")
-    print("=" * 50)
+    print("=" * 55)
+    print("🛡️  Guardian — Contrôle Parental")
+    print(f"👤 Profil  : {CHILD_NAME}")
+    print(f"🌐 Cloud   : {APP_URL_CLOUD[:50]}...")
+    print(f"🏠 Local   : {APP_URL_LOCAL}")
+    print(f"⏱️  Capture : toutes les {INTERVAL}s")
+    print(f"🔍 Blocage : vérifié toutes les {BLOCK_CHECK_INTERVAL}s")
+    print("=" * 55)
     
-    # Test initial de connexion
+    # Test de connexion
     test = send_request("GET", "/api/health")
     if test:
-        print("✅ Connexion au serveur réussie !")
+        log("✅ Serveur connecté")
     else:
-        print("⚠️  Impossible de joindre le serveur. Les rapports seront retentés.")
+        log("⚠️  Serveur injoignable — les rapports seront retentés")
     
-    # Test initial de capture d'écran
-    print("📸 Test de capture d'écran...")
-    test_ss = capture_screenshot()
-    if test_ss:
-        print(f"✅ Capture d'écran OK ({len(test_ss) // 1024} KB)")
-    else:
-        print("⚠️  Capture d'écran indisponible. Installez: sudo apt install gnome-screenshot")
+    # Lancer les deux boucles en parallèle
+    log("🔄 Monitoring démarré (Ctrl+C pour arrêter)")
     
-    # Test de détection de fenêtre
-    print("🪟 Test de détection de fenêtre...")
-    test_wid, test_title = get_active_window_info()
-    print(f"   Fenêtre détectée : {test_title}")
+    report_thread = threading.Thread(target=report_loop, daemon=True)
+    report_thread.start()
     
-    print("=" * 50)
-    print("🔄 Monitoring en cours... (Ctrl+C pour arrêter)")
-    print()
-    
-    # Run loops in separate threads
-    threading.Thread(target=report_loop, daemon=True).start()
-    block_loop()
+    try:
+        block_loop()
+    except KeyboardInterrupt:
+        log("⏹️  Guardian arrêté par l'utilisateur")
