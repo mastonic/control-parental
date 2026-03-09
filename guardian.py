@@ -12,7 +12,7 @@ APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west
 # Si le serveur est sur la MEME machine : "http://localhost:3000"
 # Si le serveur est sur une AUTRE machine : utilisez le nom d'hôte + .local
 # Exemple : "http://mon-ordinateur.local:3000" (marche même si l'IP change via DHCP)
-APP_URL_LOCAL = "http://localhost:3000" 
+APP_URL_LOCAL = "http://weedleay.local:3000" 
 
 INTERVAL = 30 # secondes entre chaque capture
 BLOCK_CHECK_INTERVAL = 2 # secondes entre chaque vérification de blocage
@@ -88,7 +88,11 @@ def report_loop():
                 "screenshot": screenshot
             }
             
-            send_request("POST", "/api/report", payload)
+            res = send_request("POST", "/api/report", payload)
+            if res:
+                print(f"Report sent successfully: {title}")
+            else:
+                print(f"Failed to send report: {title}")
         except Exception as e:
             print(f"Report Error: {e}")
             

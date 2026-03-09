@@ -184,6 +184,19 @@ async function startServer() {
       });
       app.use(vite.middlewares);
       
+      // Explicit root route for development
+      app.get("/", async (req, res) => {
+        try {
+          const indexPath = path.join(process.cwd(), "index.html");
+          const template = await fs.readFile(indexPath, "utf-8");
+          const html = await vite.transformIndexHtml(req.url, template);
+          res.status(200).set({ "Content-Type": "text/html" }).end(html);
+        } catch (e: any) {
+          console.error("Vite root transform error:", e);
+          res.status(500).end(`Vite Error: ${e.message}`);
+        }
+      });
+
       // SPA Fallback for development
       app.get("*", async (req, res, next) => {
         // Skip API routes
