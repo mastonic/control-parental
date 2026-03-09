@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from 'dotenv';
+import fs from "fs/promises";
 
 dotenv.config();
 
@@ -46,6 +47,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  console.log("Starting server in mode:", process.env.NODE_ENV || "development");
+
   app.use(express.json({ limit: '10mb' }));
   
   app.use((req, res, next) => {
@@ -53,39 +56,58 @@ async function startServer() {
     next();
   });
 
-  // API ROUTES
-  app.get("/health", (req, res) => {
+  // API ROUTER
+  const apiRouter = express.Router();
+
+  // Force JSON for all API responses
+  apiRouter.use((req, res, next) => {
+    res.setHeader("Content-Type", "application/json");
+    next();
+  });
+
+  apiRouter.get("/health", (req, res) => {
+    console.log("Health check requested");
     res.json({ status: "ok", db: db ? "connected" : "error" });
   });
 
-  app.get("/api/activity", (req, res) => {
+  apiRouter.get("/test", (req, res) => {
+    res.json({ status: "ok", message: "API is working" });
+  });
+
+  apiRouter.get(["/activity", "/activity/"], (req, res) => {
+    console.log("Fetching activity logs...");
     try {
       const logs = db.prepare("SELECT * FROM activity ORDER BY timestamp DESC LIMIT 100").all();
       res.json(logs);
     } catch (err) {
+      console.error("Database error in /api/activity:", err);
       res.status(500).json({ error: "Database error" });
     }
   });
 
-  app.get("/api/screenshots", (req, res) => {
+  apiRouter.get(["/screenshots", "/screenshots/"], (req, res) => {
+    console.log("Fetching screenshots...");
     try {
       const shots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 50").all();
       res.json(shots);
     } catch (err) {
+      console.error("Database error in /api/screenshots:", err);
       res.status(500).json({ error: "Database error" });
     }
   });
 
-  app.get("/api/blocklist", (req, res) => {
+  apiRouter.get(["/blocklist", "/blocklist/"], (req, res) => {
+    console.log("Fetching blocklist...");
     try {
       const list = db.prepare("SELECT * FROM blocklist").all();
       res.json(list);
     } catch (err) {
+      console.error("Database error in /api/blocklist:", err);
       res.status(500).json({ error: "Database error" });
     }
   });
 
-  app.post("/api/report", (req, res) => {
+  apiRouter.post("/report", (req, res) => {
     const { window_title, app_name, screenshot } = req.body;
     try {
       if (window_title || app_name) {
@@ -102,7 +124,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/blocklist", (req, res) => {
+  apiRouter.post("/blocklist", (req, res) => {
     const { keyword } = req.body;
     if (keyword) {
       try {
@@ -112,16 +134,25 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.delete("/api/blocklist/:id", (req, res) => {
+  apiRouter.delete("/blocklist/:id", (req, res) => {
     db.prepare("DELETE FROM blocklist WHERE id = ?").run(req.params.id);
     res.json({ status: "ok" });
   });
 
-  app.delete("/api/clear", (req, res) => {
+  apiRouter.delete("/clear", (req, res) => {
     db.prepare("DELETE FROM activity").run();
     db.prepare("DELETE FROM screenshots").run();
     res.json({ status: "ok" });
   });
+
+  // Catch-all for API router
+  apiRouter.use("*", (req, res) => {
+    console.warn(`API 404: ${req.method} ${req.url}`);
+    res.status(404).json({ error: "API route not found" });
+  });
+
+  // Mount API router
+  app.use("/api", apiRouter);
 
   // VITE SETUP
   if (process.env.NODE_ENV !== "production") {
@@ -150,6 +181,23 @@ async function startServer() {
         appType: "spa",
       });
       app.use(vite.middlewares);
+      
+      // SPA Fallback for development
+      app.get("*", async (req, res, next) => {
+        // Skip API routes
+        if (req.url.startsWith("/api")) return next();
+        
+        try {
+          const template = await fs.readFile(path.join(process.cwd(), "index.html"), "utf-8");
+          const html = await vite.transformIndexHtml(req.url, template);
+          res.status(200).set({ "Content-Type": "text/html" }).end(html);
+        } catch (e: any) {
+          vite.ssrFixStacktrace(e);
+          console.error("Vite transform error:", e);
+          res.status(500).end(e.message);
+        }
+      });
+      
       console.log("Vite middleware loaded");
     } catch (viteErr) {
       console.error("Failed to start Vite:", viteErr);
