@@ -73,6 +73,24 @@ async function startServer() {
     res.json({ status: "ok", message: "API is working" });
   });
 
+  app.get("/api/activity", (req, res) => {
+    try {
+      const logs = db.prepare("SELECT * FROM activity ORDER BY timestamp DESC LIMIT 100").all();
+      res.json(logs);
+    } catch (err) {
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
+  app.get("/api/screenshots", (req, res) => {
+    try {
+      const shots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 50").all();
+      res.json(shots);
+    } catch (err) {
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
   app.get("/api/blocklist", (req, res) => {
     try {
       const list = db.prepare("SELECT * FROM blocklist").all();
