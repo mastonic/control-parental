@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Monitor, 
-  Activity, 
-  Image as ImageIcon, 
-  Settings, 
-  Trash2, 
-  Terminal, 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Monitor,
+  Activity,
+  Image as ImageIcon,
+  Settings,
+  Trash2,
+  Terminal,
   ShieldCheck,
   RefreshCw,
   Clock,
@@ -14,7 +14,19 @@ import {
   Ban,
   Plus,
   Menu,
-  X
+  X,
+  Eye,
+  Search,
+  Tag,
+  Youtube,
+  Globe,
+  Gamepad2,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  Calendar,
+  Maximize2,
+  ZoomIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -36,6 +48,26 @@ interface BlockedItem {
   keyword: string;
 }
 
+// Category presets for blocklist
+const CATEGORY_PRESETS = [
+  { label: 'YouTube', icon: Youtube, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20', examples: 'MrBeast, PewDiePie, Squeezie...' },
+  { label: 'Plateforme', icon: Globe, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20', examples: 'TikTok, Twitch, Instagram...' },
+  { label: 'Jeux', icon: Gamepad2, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20', examples: 'Fortnite, Roblox, Minecraft...' },
+  { label: 'Personnalisé', icon: Tag, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/20', examples: 'Tout autre mot-clé...' },
+];
+
+function getCategoryForKeyword(keyword: string): typeof CATEGORY_PRESETS[0] {
+  const lower = keyword.toLowerCase();
+  const youtubeKeywords = ['youtube', 'mrbeast', 'pewdiepie', 'squeezie', 'inoxtag', 'michou', 'lebouseuh', 'amixem', 'cyprien', 'norman', 'tibo inshape'];
+  const platformKeywords = ['tiktok', 'twitch', 'instagram', 'snapchat', 'twitter', 'facebook', 'discord', 'reddit', 'netflix', 'disney+'];
+  const gameKeywords = ['fortnite', 'roblox', 'minecraft', 'gta', 'call of duty', 'cod', 'valorant', 'league of legends', 'apex', 'fifa', 'brawl stars'];
+
+  if (youtubeKeywords.some(k => lower.includes(k))) return CATEGORY_PRESETS[0];
+  if (platformKeywords.some(k => lower.includes(k))) return CATEGORY_PRESETS[1];
+  if (gameKeywords.some(k => lower.includes(k))) return CATEGORY_PRESETS[2];
+  return CATEGORY_PRESETS[3];
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'screenshots' | 'setup' | 'settings' | 'blocklist'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -46,14 +78,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
+  // Modal states
+  const [selectedLog, setSelectedLog] = useState<ActivityLog | null>(null);
+  const [selectedScreenshot, setSelectedScreenshot] = useState<Screenshot | null>(null);
+  const [screenshotSearch, setScreenshotSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
   const fetchLogs = async () => {
     try {
       const res = await fetch('/api/activity');
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Fetch logs failed with status ${res.status}: ${text}`);
-        return;
-      }
+      if (!res.ok) return;
       const data = await res.json();
       setLogs(data);
     } catch (err) {
@@ -64,11 +98,7 @@ export default function App() {
   const fetchScreenshots = async () => {
     try {
       const res = await fetch('/api/screenshots');
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Fetch screenshots failed with status ${res.status}: ${text}`);
-        return;
-      }
+      if (!res.ok) return;
       const data = await res.json();
       setScreenshots(data);
     } catch (err) {
@@ -79,11 +109,7 @@ export default function App() {
   const fetchBlocklist = async () => {
     try {
       const res = await fetch('/api/blocklist');
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Fetch blocklist failed with status ${res.status}: ${text}`);
-        return;
-      }
+      if (!res.ok) return;
       const data = await res.json();
       setBlocklist(data);
     } catch (err) {
@@ -100,7 +126,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAll();
-    const interval = setInterval(refreshAll, 10000); // Auto-refresh every 10s
+    const interval = setInterval(refreshAll, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -126,6 +152,69 @@ export default function App() {
     await fetch(`/api/blocklist/${id}`, { method: 'DELETE' });
     fetchBlocklist();
   };
+
+  // Find closest screenshot to a given activity timestamp
+  const findClosestScreenshot = (logTimestamp: string): Screenshot | null => {
+    if (screenshots.length === 0) return null;
+    const logTime = new Date(logTimestamp).getTime();
+    let closest: Screenshot | null = null;
+    let minDiff = Infinity;
+
+    for (const ss of screenshots) {
+      const ssTime = new Date(ss.timestamp).getTime();
+      const diff = Math.abs(ssTime - logTime);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = ss;
+      }
+    }
+    // Only return if within 5 minutes
+    return minDiff <= 5 * 60 * 1000 ? closest : null;
+  };
+
+  // Filter screenshots by search
+  const filteredScreenshots = useMemo(() => {
+    if (!screenshotSearch.trim()) return screenshots;
+    const search = screenshotSearch.toLowerCase();
+    return screenshots.filter(ss =>
+      new Date(ss.timestamp).toLocaleString().toLowerCase().includes(search)
+    );
+  }, [screenshots, screenshotSearch]);
+
+  // Categorized blocklist
+  const categorizedBlocklist = useMemo(() => {
+    return blocklist.map(item => ({
+      ...item,
+      category: getCategoryForKeyword(item.keyword)
+    }));
+  }, [blocklist]);
+
+  const filteredBlocklist = useMemo(() => {
+    if (!selectedCategory) return categorizedBlocklist;
+    return categorizedBlocklist.filter(item => item.category.label === selectedCategory);
+  }, [categorizedBlocklist, selectedCategory]);
+
+  // Navigate screenshots in lightbox
+  const navigateScreenshot = (direction: 'prev' | 'next') => {
+    if (!selectedScreenshot) return;
+    const idx = screenshots.findIndex(s => s.id === selectedScreenshot.id);
+    if (direction === 'prev' && idx > 0) setSelectedScreenshot(screenshots[idx - 1]);
+    if (direction === 'next' && idx < screenshots.length - 1) setSelectedScreenshot(screenshots[idx + 1]);
+  };
+
+  // Handle keyboard navigation in lightbox
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (selectedScreenshot) {
+        if (e.key === 'ArrowLeft') navigateScreenshot('prev');
+        if (e.key === 'ArrowRight') navigateScreenshot('next');
+        if (e.key === 'Escape') setSelectedScreenshot(null);
+      }
+      if (selectedLog && e.key === 'Escape') setSelectedLog(null);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedScreenshot, selectedLog]);
 
   const agentScript = `
 import subprocess
@@ -251,13 +340,198 @@ if __name__ == "__main__":
       {/* Mobile Sidebar Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsSidebarOpen(false)}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
           />
+        )}
+      </AnimatePresence>
+
+      {/* ========== ACTIVITY DETAIL MODAL ========== */}
+      <AnimatePresence>
+        {selectedLog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4"
+            onClick={() => setSelectedLog(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="bg-[#141414] border border-white/10 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl shadow-black/50"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b border-white/5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
+                    <Eye className="w-5 h-5 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold">Détail de l'activité</h3>
+                    <p className="text-xs text-zinc-500">Événement #{selectedLog.id}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedLog(null)}
+                  className="p-2 hover:bg-white/10 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5 text-zinc-400" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-6">
+                {/* Event Info Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                    <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Date & Heure</p>
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-emerald-500" />
+                      <span className="text-white font-medium text-sm">
+                        {new Date(selectedLog.timestamp).toLocaleDateString('fr-FR', {
+                          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-emerald-500 font-mono text-lg mt-1 ml-6">
+                      {new Date(selectedLog.timestamp).toLocaleTimeString('fr-FR')}
+                    </p>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                    <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Application</p>
+                    <div className="flex items-center gap-2">
+                      <Monitor className="w-4 h-4 text-blue-500" />
+                      <span className="text-white font-medium text-sm">{selectedLog.app_name}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Window Title */}
+                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Fenêtre Active</p>
+                  <p className="text-white text-sm leading-relaxed break-all">{selectedLog.window_title}</p>
+                </div>
+
+                {/* Associated Screenshot */}
+                {(() => {
+                  const closestSs = findClosestScreenshot(selectedLog.timestamp);
+                  if (closestSs) {
+                    return (
+                      <div className="space-y-3">
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          <ImageIcon className="w-3 h-3" />
+                          Capture d'écran associée
+                        </p>
+                        <div className="relative group rounded-xl overflow-hidden border border-white/10">
+                          <img
+                            src={`data:image/png;base64,${closestSs.image_data}`}
+                            alt="Screenshot"
+                            className="w-full rounded-xl"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedScreenshot(closestSs);
+                              }}
+                              className="w-full py-2.5 bg-white/10 backdrop-blur-md rounded-lg text-xs font-bold text-white flex items-center justify-center gap-2 hover:bg-white/20 transition-all"
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                              Voir en plein écran
+                            </button>
+                          </div>
+                          <div className="absolute top-3 right-3 px-2 py-1 bg-black/60 backdrop-blur-md rounded-lg text-[10px] text-zinc-300 font-mono">
+                            {new Date(closestSs.timestamp).toLocaleTimeString('fr-FR')}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="bg-zinc-900/50 rounded-xl p-8 text-center border border-white/5">
+                        <ImageIcon className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+                        <p className="text-zinc-500 text-sm">Aucune capture associée à cet événement</p>
+                        <p className="text-zinc-600 text-xs mt-1">Les captures sont associées si elles sont prises dans un intervalle de 5 minutes</p>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ========== SCREENSHOT LIGHTBOX ========== */}
+      <AnimatePresence>
+        {selectedScreenshot && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[100] flex items-center justify-center"
+            onClick={() => setSelectedScreenshot(null)}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => setSelectedScreenshot(null)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
+            >
+              <X className="w-5 h-5 text-white" />
+            </button>
+
+            {/* Timestamp badge */}
+            <div className="absolute top-6 left-6 px-4 py-2 bg-white/10 backdrop-blur-md rounded-full text-sm text-white font-medium z-10">
+              <span className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-emerald-500" />
+                {new Date(selectedScreenshot.timestamp).toLocaleString('fr-FR')}
+              </span>
+            </div>
+
+            {/* Navigation arrows */}
+            {screenshots.findIndex(s => s.id === selectedScreenshot.id) > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); navigateScreenshot('prev'); }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
+              >
+                <ChevronLeft className="w-6 h-6 text-white" />
+              </button>
+            )}
+            {screenshots.findIndex(s => s.id === selectedScreenshot.id) < screenshots.length - 1 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); navigateScreenshot('next'); }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
+              >
+                <ChevronRight className="w-6 h-6 text-white" />
+              </button>
+            )}
+
+            {/* Image */}
+            <motion.img
+              key={selectedScreenshot.id}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              src={`data:image/png;base64,${selectedScreenshot.image_data}`}
+              alt="Screenshot"
+              className="max-w-[90vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            />
+
+            {/* Counter */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-white/10 backdrop-blur-md rounded-full text-xs text-zinc-300 font-medium">
+              {screenshots.findIndex(s => s.id === selectedScreenshot.id) + 1} / {screenshots.length}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -276,7 +550,7 @@ if __name__ == "__main__":
               <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold">Ubuntu Monitor</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={() => setIsSidebarOpen(false)}
             className="p-2 text-zinc-500 hover:text-white lg:hidden"
           >
@@ -285,36 +559,11 @@ if __name__ == "__main__":
         </div>
 
         <div className="space-y-1">
-          <NavItem 
-            active={activeTab === 'dashboard'} 
-            onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
-            icon={<Activity className="w-4 h-4" />} 
-            label="Activité" 
-          />
-          <NavItem 
-            active={activeTab === 'screenshots'} 
-            onClick={() => { setActiveTab('screenshots'); setIsSidebarOpen(false); }} 
-            icon={<ImageIcon className="w-4 h-4" />} 
-            label="Captures" 
-          />
-          <NavItem 
-            active={activeTab === 'blocklist'} 
-            onClick={() => { setActiveTab('blocklist'); setIsSidebarOpen(false); }} 
-            icon={<Ban className="w-4 h-4" />} 
-            label="Blocage" 
-          />
-          <NavItem 
-            active={activeTab === 'setup'} 
-            onClick={() => { setActiveTab('setup'); setIsSidebarOpen(false); }} 
-            icon={<Terminal className="w-4 h-4" />} 
-            label="Installation" 
-          />
-          <NavItem 
-            active={activeTab === 'settings'} 
-            onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
-            icon={<Settings className="w-4 h-4" />} 
-            label="Paramètres" 
-          />
+          <NavItem active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} icon={<Activity className="w-4 h-4" />} label="Activité" />
+          <NavItem active={activeTab === 'screenshots'} onClick={() => { setActiveTab('screenshots'); setIsSidebarOpen(false); }} icon={<ImageIcon className="w-4 h-4" />} label="Captures" badge={screenshots.length > 0 ? screenshots.length : undefined} />
+          <NavItem active={activeTab === 'blocklist'} onClick={() => { setActiveTab('blocklist'); setIsSidebarOpen(false); }} icon={<Ban className="w-4 h-4" />} label="Blocage" badge={blocklist.length > 0 ? blocklist.length : undefined} />
+          <NavItem active={activeTab === 'setup'} onClick={() => { setActiveTab('setup'); setIsSidebarOpen(false); }} icon={<Terminal className="w-4 h-4" />} label="Installation" />
+          <NavItem active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} icon={<Settings className="w-4 h-4" />} label="Paramètres" />
         </div>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -322,7 +571,7 @@ if __name__ == "__main__":
             <Clock className="w-3 h-3" />
             <span>Mis à jour: {lastRefresh.toLocaleTimeString()}</span>
           </div>
-          <button 
+          <button
             onClick={refreshAll}
             disabled={loading}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
@@ -337,13 +586,16 @@ if __name__ == "__main__":
       <main className="lg:pl-64 min-h-screen">
         <header className="h-20 border-b border-white/5 flex items-center justify-between px-6 lg:px-10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-xl z-40">
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsSidebarOpen(true)}
-              className="p-2 text-zinc-500 hover:text-white lg:hidden"
-            >
+            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-zinc-500 hover:text-white lg:hidden">
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-xl font-medium text-white capitalize">{activeTab}</h2>
+            <h2 className="text-xl font-medium text-white">
+              {activeTab === 'dashboard' && 'Dashboard'}
+              {activeTab === 'screenshots' && 'Captures d\'écran'}
+              {activeTab === 'blocklist' && 'Gestion des Blocages'}
+              {activeTab === 'setup' && 'Installation'}
+              {activeTab === 'settings' && 'Paramètres'}
+            </h2>
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
@@ -355,8 +607,10 @@ if __name__ == "__main__":
 
         <div className="p-6 lg:p-10 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
+
+            {/* ========== DASHBOARD / ACTIVITÉ ========== */}
             {activeTab === 'dashboard' && (
-              <motion.div 
+              <motion.div
                 key="dashboard"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -364,21 +618,9 @@ if __name__ == "__main__":
                 className="space-y-8"
               >
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <StatCard 
-                    label="Total Logs" 
-                    value={logs.length} 
-                    icon={<Activity className="text-emerald-500" />} 
-                  />
-                  <StatCard 
-                    label="Captures" 
-                    value={screenshots.length} 
-                    icon={<ImageIcon className="text-blue-500" />} 
-                  />
-                  <StatCard 
-                    label="Dernière Activité" 
-                    value={logs[0] ? new Date(logs[0].timestamp).toLocaleTimeString() : 'N/A'} 
-                    icon={<Clock className="text-amber-500" />} 
-                  />
+                  <StatCard label="Total Logs" value={logs.length} icon={<Activity className="text-emerald-500" />} />
+                  <StatCard label="Captures" value={screenshots.length} icon={<ImageIcon className="text-blue-500" />} />
+                  <StatCard label="Dernière Activité" value={logs[0] ? new Date(logs[0].timestamp).toLocaleTimeString() : 'N/A'} icon={<Clock className="text-amber-500" />} />
                 </div>
 
                 <div className="bg-[#111111] border border-white/5 rounded-2xl overflow-hidden">
@@ -387,6 +629,7 @@ if __name__ == "__main__":
                       <Activity className="w-4 h-4 text-emerald-500" />
                       Journal d'activité récent
                     </h3>
+                    <p className="text-xs text-zinc-500">Cliquez sur un événement pour les détails</p>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
@@ -395,31 +638,49 @@ if __name__ == "__main__":
                           <th className="px-6 py-4">Heure</th>
                           <th className="px-6 py-4">Fenêtre Active</th>
                           <th className="px-6 py-4">Application</th>
+                          <th className="px-6 py-4 text-center">Capture</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
                         {logs.length === 0 ? (
                           <tr>
-                            <td colSpan={3} className="px-6 py-12 text-center text-zinc-500 italic">
+                            <td colSpan={4} className="px-6 py-12 text-center text-zinc-500 italic">
                               Aucune activité enregistrée. Installez l'agent sur le poste Ubuntu.
                             </td>
                           </tr>
                         ) : (
-                          logs.map((log) => (
-                            <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
-                              <td className="px-6 py-4 text-xs font-mono text-zinc-500">
-                                {new Date(log.timestamp).toLocaleTimeString()}
-                              </td>
-                              <td className="px-6 py-4 text-sm text-white font-medium">
-                                {log.window_title}
-                              </td>
-                              <td className="px-6 py-4">
-                                <span className="px-2 py-1 bg-white/5 rounded text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                                  {log.app_name}
-                                </span>
-                              </td>
-                            </tr>
-                          ))
+                          logs.map((log) => {
+                            const hasSs = findClosestScreenshot(log.timestamp) !== null;
+                            return (
+                              <tr
+                                key={log.id}
+                                onClick={() => setSelectedLog(log)}
+                                className="hover:bg-emerald-500/[0.03] transition-colors group cursor-pointer"
+                              >
+                                <td className="px-6 py-4 text-xs font-mono text-zinc-500">
+                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                </td>
+                                <td className="px-6 py-4 text-sm text-white font-medium max-w-xs truncate">
+                                  {log.window_title}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className="px-2 py-1 bg-white/5 rounded text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                                    {log.app_name}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  {hasSs ? (
+                                    <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 rounded-full">
+                                      <ImageIcon className="w-3 h-3 text-emerald-500" />
+                                      <span className="text-[10px] font-bold text-emerald-500">OUI</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-zinc-600">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -428,118 +689,269 @@ if __name__ == "__main__":
               </motion.div>
             )}
 
+            {/* ========== CAPTURES ========== */}
             {activeTab === 'screenshots' && (
-              <motion.div 
+              <motion.div
                 key="screenshots"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
+                className="space-y-6"
               >
-                {screenshots.length === 0 ? (
-                  <div className="col-span-full py-20 text-center bg-[#111111] rounded-2xl border border-white/5">
-                    <ImageIcon className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
-                    <p className="text-zinc-500">Aucune capture d'écran disponible.</p>
+                {/* Search & Stats Bar */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <div className="relative flex-1 w-full">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                    <input
+                      type="text"
+                      value={screenshotSearch}
+                      onChange={e => setScreenshotSearch(e.target.value)}
+                      placeholder="Rechercher par date..."
+                      className="w-full bg-[#111111] border border-white/10 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/50 transition-all"
+                    />
                   </div>
-                ) : (
-                  screenshots.map((ss) => (
-                    <div key={ss.id} className="group bg-[#111111] border border-white/5 rounded-2xl overflow-hidden hover:border-emerald-500/30 transition-all">
-                      <div className="aspect-video relative overflow-hidden bg-black">
-                        <img 
-                          src={`data:image/png;base64,${ss.image_data}`} 
-                          alt="Screenshot" 
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                           <button className="w-full py-2 bg-white/10 backdrop-blur-md rounded-lg text-xs font-bold text-white flex items-center justify-center gap-2">
-                             <ExternalLink className="w-3 h-3" />
-                             Voir en grand
-                           </button>
-                        </div>
-                      </div>
-                      <div className="p-4 flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                          {new Date(ss.timestamp).toLocaleString()}
-                        </span>
-                        <ImageIcon className="w-3 h-3 text-zinc-600" />
-                      </div>
+                  <div className="flex items-center gap-2 px-4 py-3 bg-[#111111] border border-white/5 rounded-xl text-xs text-zinc-400">
+                    <ImageIcon className="w-4 h-4 text-blue-500" />
+                    <span className="font-bold text-white">{filteredScreenshots.length}</span> captures
+                  </div>
+                </div>
+
+                {/* Gallery Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredScreenshots.length === 0 ? (
+                    <div className="col-span-full py-20 text-center bg-[#111111] rounded-2xl border border-white/5">
+                      <ImageIcon className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
+                      <p className="text-zinc-500">
+                        {screenshotSearch ? 'Aucun résultat pour cette recherche.' : 'Aucune capture d\'écran disponible.'}
+                      </p>
                     </div>
-                  ))
-                )}
+                  ) : (
+                    filteredScreenshots.map((ss, index) => (
+                      <motion.div
+                        key={ss.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.05, duration: 0.3 }}
+                        className="group bg-[#111111] border border-white/5 rounded-2xl overflow-hidden hover:border-emerald-500/30 transition-all hover:shadow-lg hover:shadow-emerald-500/5 cursor-pointer"
+                        onClick={() => setSelectedScreenshot(ss)}
+                      >
+                        <div className="aspect-video relative overflow-hidden bg-black">
+                          <img
+                            src={`data:image/png;base64,${ss.image_data}`}
+                            alt="Screenshot"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                            <button className="w-full py-2 bg-white/10 backdrop-blur-md rounded-lg text-xs font-bold text-white flex items-center justify-center gap-2 hover:bg-white/20 transition-all">
+                              <ZoomIn className="w-3 h-3" />
+                              Voir en plein écran
+                            </button>
+                          </div>
+                          {/* Index badge */}
+                          <div className="absolute top-3 left-3 px-2 py-1 bg-black/60 backdrop-blur-md rounded-lg text-[10px] text-zinc-300 font-bold">
+                            #{index + 1}
+                          </div>
+                        </div>
+                        <div className="p-4 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                            {new Date(ss.timestamp).toLocaleString('fr-FR')}
+                          </span>
+                          <ImageIcon className="w-3 h-3 text-zinc-600" />
+                        </div>
+                      </motion.div>
+                    ))
+                  )}
+                </div>
               </motion.div>
             )}
 
+            {/* ========== BLOCAGE ========== */}
             {activeTab === 'blocklist' && (
-              <motion.div 
+              <motion.div
                 key="blocklist"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="max-w-2xl space-y-8"
+                className="space-y-8"
               >
+                {/* Info Banner */}
                 <div className="bg-amber-500/5 border border-amber-500/20 p-6 rounded-2xl flex gap-4">
                   <div className="w-10 h-10 bg-amber-500/10 rounded-full flex items-center justify-center shrink-0">
                     <Info className="w-5 h-5 text-amber-500" />
                   </div>
                   <div>
-                    <h4 className="text-white font-semibold mb-1">Comment bloquer YouTube ?</h4>
+                    <h4 className="text-white font-semibold mb-1">Comment fonctionne le blocage ?</h4>
                     <p className="text-sm text-zinc-400 leading-relaxed">
-                      Ajoutez des mots-clés (titres de vidéos, noms de chaînes). 
-                      Si le titre de la fenêtre du navigateur contient l'un de ces mots, la fenêtre sera immédiatement fermée.
-                      Exemple : <code className="text-amber-500">MrBeast</code> ou <code className="text-amber-500">Fortnite</code>.
+                      Ajoutez des <strong className="text-amber-400">tags spécifiques</strong> (noms de chaînes YouTube, plateformes, jeux).
+                      <strong className="text-white"> Seuls ces tags sont bloqués</strong>, tout le reste passe normalement.
+                      Si le titre de la fenêtre contient l'un de ces mots-clés, elle sera immédiatement fermée.
                     </p>
                   </div>
                 </div>
 
-                <div className="bg-[#111111] border border-white/5 rounded-2xl p-6 space-y-6">
-                  <div className="flex gap-3">
-                    <input 
-                      type="text" 
-                      value={newKeyword}
-                      onChange={(e) => setNewKeyword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addBlock()}
-                      placeholder="Mot-clé à bloquer (ex: Nom de la vidéo)"
-                      className="flex-1 bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all"
-                    />
-                    <button 
-                      onClick={addBlock}
-                      className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded-xl flex items-center gap-2 transition-all"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Ajouter
-                    </button>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Left Column - Add & Categories */}
+                  <div className="lg:col-span-1 space-y-6">
+                    {/* Add Form */}
+                    <div className="bg-[#111111] border border-white/5 rounded-2xl p-6 space-y-4">
+                      <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <Plus className="w-4 h-4 text-emerald-500" />
+                        Ajouter un tag
+                      </h4>
+                      <input
+                        type="text"
+                        value={newKeyword}
+                        onChange={(e) => setNewKeyword(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && addBlock()}
+                        placeholder="ex: MrBeast, Fortnite..."
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-zinc-600"
+                      />
+                      <button
+                        onClick={addBlock}
+                        disabled={!newKeyword.trim()}
+                        className="w-full px-4 py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Bloquer ce tag
+                      </button>
+                    </div>
+
+                    {/* Quick Add Categories */}
+                    <div className="bg-[#111111] border border-white/5 rounded-2xl p-6 space-y-4">
+                      <h4 className="text-sm font-semibold text-white">Catégories</h4>
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => setSelectedCategory(null)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${selectedCategory === null
+                              ? 'bg-white/10 text-white border border-white/10'
+                              : 'text-zinc-500 hover:bg-white/5'
+                            }`}
+                        >
+                          <Tag className="w-4 h-4" />
+                          <span>Tous</span>
+                          <span className="ml-auto text-xs font-bold">{blocklist.length}</span>
+                        </button>
+                        {CATEGORY_PRESETS.map(cat => {
+                          const count = categorizedBlocklist.filter(i => i.category.label === cat.label).length;
+                          return (
+                            <button
+                              key={cat.label}
+                              onClick={() => setSelectedCategory(selectedCategory === cat.label ? null : cat.label)}
+                              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${selectedCategory === cat.label
+                                  ? `${cat.bg} ${cat.color} border ${cat.border}`
+                                  : 'text-zinc-500 hover:bg-white/5'
+                                }`}
+                            >
+                              <cat.icon className="w-4 h-4" />
+                              <span>{cat.label}</span>
+                              {count > 0 && <span className="ml-auto text-xs font-bold">{count}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest px-2">Mots-clés bloqués</h4>
-                    {blocklist.length === 0 ? (
-                      <p className="text-center py-10 text-zinc-600 italic text-sm">Aucun blocage actif.</p>
-                    ) : (
-                      <div className="grid gap-2">
-                        {blocklist.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 group hover:border-white/10 transition-all">
-                            <div className="flex items-center gap-3">
-                              <Ban className="w-4 h-4 text-red-500" />
-                              <span className="text-sm text-white font-medium">{item.keyword}</span>
+                  {/* Right Column - Blocked Tags List */}
+                  <div className="lg:col-span-2">
+                    <div className="bg-[#111111] border border-white/5 rounded-2xl overflow-hidden">
+                      <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                          <Ban className="w-4 h-4 text-red-500" />
+                          Tags bloqués
+                          {selectedCategory && (
+                            <span className="text-xs text-zinc-500 font-normal">— {selectedCategory}</span>
+                          )}
+                        </h4>
+                        <span className="text-xs text-zinc-500">{filteredBlocklist.length} tag(s)</span>
+                      </div>
+
+                      {filteredBlocklist.length === 0 ? (
+                        <div className="p-12 text-center">
+                          <Ban className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+                          <p className="text-zinc-500 text-sm">
+                            {selectedCategory
+                              ? `Aucun tag bloqué dans la catégorie "${selectedCategory}".`
+                              : 'Aucun tag bloqué. Ajoutez des noms de chaînes ou plateformes à bloquer.'
+                            }
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="p-4">
+                          <div className="flex flex-wrap gap-2">
+                            {filteredBlocklist.map((item) => (
+                              <motion.div
+                                key={item.id}
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                className={`group flex items-center gap-2 pl-3 pr-1.5 py-1.5 ${item.category.bg} border ${item.category.border} rounded-full transition-all hover:shadow-lg`}
+                              >
+                                <item.category.icon className={`w-3.5 h-3.5 ${item.category.color}`} />
+                                <span className="text-sm text-white font-medium">{item.keyword}</span>
+                                <button
+                                  onClick={() => removeBlock(item.id)}
+                                  className="p-1 hover:bg-red-500/20 rounded-full transition-all ml-1"
+                                  title="Supprimer"
+                                >
+                                  <X className="w-3.5 h-3.5 text-zinc-400 hover:text-red-500" />
+                                </button>
+                              </motion.div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Suggestions */}
+                    <div className="mt-6 bg-[#111111] border border-white/5 rounded-2xl p-6 space-y-4">
+                      <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        Suggestions rapides
+                      </h4>
+                      <p className="text-xs text-zinc-500">Cliquez pour ajouter rapidement un tag de blocage :</p>
+                      <div className="space-y-4">
+                        {CATEGORY_PRESETS.slice(0, 3).map(cat => (
+                          <div key={cat.label} className="space-y-2">
+                            <p className={`text-[10px] font-bold uppercase tracking-widest ${cat.color}`}>{cat.label}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {getSuggestionsForCategory(cat.label).map(suggestion => {
+                                const isBlocked = blocklist.some(b => b.keyword.toLowerCase() === suggestion.toLowerCase());
+                                return (
+                                  <button
+                                    key={suggestion}
+                                    disabled={isBlocked}
+                                    onClick={async () => {
+                                      await fetch('/api/blocklist', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ keyword: suggestion })
+                                      });
+                                      fetchBlocklist();
+                                    }}
+                                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isBlocked
+                                        ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed line-through'
+                                        : `border border-white/10 text-zinc-400 hover:${cat.bg} hover:${cat.color} hover:${cat.border}`
+                                      }`}
+                                  >
+                                    {isBlocked ? '✓ ' : '+ '}{suggestion}
+                                  </button>
+                                );
+                              })}
                             </div>
-                            <button 
-                              onClick={() => removeBlock(item.id)}
-                              className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
                           </div>
                         ))}
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
+            {/* ========== SETUP ========== */}
             {activeTab === 'setup' && (
-              <motion.div 
+              <motion.div
                 key="setup"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -553,8 +965,8 @@ if __name__ == "__main__":
                   <div>
                     <h4 className="text-white font-semibold mb-1">Comment ça marche ?</h4>
                     <p className="text-sm text-zinc-400 leading-relaxed">
-                      Pour surveiller le poste Ubuntu, vous devez y exécuter un petit script Python ("l'agent"). 
-                      Ce script capturera périodiquement le titre de la fenêtre active et une capture d'écran, 
+                      Pour surveiller le poste Ubuntu, vous devez y exécuter un petit script Python ("l'agent").
+                      Ce script capturera périodiquement le titre de la fenêtre active et une capture d'écran,
                       puis les enverra à ce tableau de bord.
                     </p>
                   </div>
@@ -584,7 +996,7 @@ if __name__ == "__main__":
                           <pre className="p-4 bg-black rounded-xl border border-white/5 text-[11px] font-mono text-zinc-400 overflow-x-auto max-h-[400px]">
                             {agentScript}
                           </pre>
-                          <button 
+                          <button
                             onClick={() => navigator.clipboard.writeText(agentScript)}
                             className="absolute top-4 right-4 p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all opacity-0 group-hover:opacity-100"
                           >
@@ -603,56 +1015,13 @@ if __name__ == "__main__":
                       </div>
                     </li>
                   </ol>
-
-                  <div className="mt-10 pt-10 border-t border-white/5 space-y-4">
-                    <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                      <Monitor className="w-5 h-5 text-blue-500" />
-                      Astuce : Déploiement sans clé USB (Git)
-                    </h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                      Pour récupérer le code sans clé USB, utilisez la fonction <strong>"Export to GitHub"</strong> dans les paramètres de cette application (icône ⚙️), puis clonez votre propre dépôt :
-                    </p>
-                    <div className="bg-black rounded-xl border border-white/5 p-4 space-y-3">
-                      <p className="text-xs text-zinc-500 font-mono"># 1. Exportez d'abord vers votre GitHub via les paramètres ⚙️</p>
-                      <p className="text-xs text-zinc-500 font-mono"># 2. Sur le poste Ubuntu, clonez VOTRE dépôt :</p>
-                      <code className="block text-xs text-emerald-400">
-                        git clone https://github.com/VOTRE_PSEUDO/ubuntu-guardian.git
-                      </code>
-                      <p className="text-xs text-zinc-500 font-mono mt-4"># 3. Le fichier guardian.py sera déjà là !</p>
-                      <code className="block text-xs text-blue-400">
-                        cd ubuntu-guardian && python3 guardian.py
-                      </code>
-                    </div>
-                  </div>
-
-                  <div className="mt-10 pt-10 border-t border-white/5 space-y-4">
-                    <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-blue-400" />
-                      Mode Réseau Local (Fallback)
-                    </h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                      Si le serveur Google est indisponible, vous pouvez faire tourner le serveur sur votre propre réseau :
-                    </p>
-                    <div className="bg-black rounded-xl border border-white/5 p-4 space-y-3">
-                      <p className="text-xs text-zinc-500 font-mono"># 1. Sur votre machine locale (PC ou Ubuntu) :</p>
-                      <code className="block text-xs text-blue-400">
-                        npm install && npm run dev
-                      </code>
-                      <p className="text-xs text-zinc-500 font-mono mt-4"># 2. Astuce DHCP : Utilisez le nom d'hôte au lieu de l'IP</p>
-                      <p className="text-[11px] text-zinc-400 italic">
-                        Si l'IP change souvent, utilisez le nom de votre PC suivi de .local
-                      </p>
-                      <code className="block text-xs text-emerald-400">
-                        APP_URL_LOCAL = "http://NOM-DE-VOTRE-PC.local:3000"
-                      </code>
-                    </div>
-                  </div>
                 </div>
               </motion.div>
             )}
 
+            {/* ========== SETTINGS ========== */}
             {activeTab === 'settings' && (
-              <motion.div 
+              <motion.div
                 key="settings"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -663,13 +1032,13 @@ if __name__ == "__main__":
                   <div>
                     <h3 className="text-lg font-medium text-white mb-2">Gestion des données</h3>
                     <p className="text-sm text-zinc-500">
-                      Toutes les données sont stockées localement dans une base de données SQLite. 
+                      Toutes les données sont stockées localement dans une base de données SQLite.
                       Vous pouvez les effacer à tout moment.
                     </p>
                   </div>
-                  
+
                   <div className="pt-6 border-t border-white/5">
-                    <button 
+                    <button
                       onClick={clearData}
                       className="flex items-center gap-2 px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-red-500 text-sm font-semibold transition-all"
                     >
@@ -684,11 +1053,15 @@ if __name__ == "__main__":
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between py-2 border-b border-white/5">
                       <span className="text-zinc-500">Version</span>
-                      <span className="text-white">v1.0.0</span>
+                      <span className="text-white">v1.1.0</span>
                     </div>
                     <div className="flex justify-between py-2 border-b border-white/5">
                       <span className="text-zinc-500">Base de données</span>
                       <span className="text-white">SQLite 3</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-white/5">
+                      <span className="text-zinc-500">Tags bloqués</span>
+                      <span className="text-white font-bold">{blocklist.length}</span>
                     </div>
                     <div className="flex justify-between py-2">
                       <span className="text-zinc-500">Statut Serveur</span>
@@ -705,18 +1078,32 @@ if __name__ == "__main__":
   );
 }
 
-function NavItem({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+function getSuggestionsForCategory(category: string): string[] {
+  switch (category) {
+    case 'YouTube': return ['MrBeast', 'Squeezie', 'Inoxtag', 'Michou', 'PewDiePie', 'Amixem', 'Cyprien', 'Tibo InShape'];
+    case 'Plateforme': return ['TikTok', 'Twitch', 'Instagram', 'Snapchat', 'Discord', 'Netflix', 'Twitter'];
+    case 'Jeux': return ['Fortnite', 'Roblox', 'Minecraft', 'GTA', 'Valorant', 'Brawl Stars', 'FIFA', 'Apex'];
+    default: return [];
+  }
+}
+
+function NavItem({ active, onClick, icon, label, badge }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, badge?: number }) {
   return (
-    <button 
+    <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-        active 
-          ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${active
+          ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
           : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
-      }`}
+        }`}
     >
       {icon}
       {label}
+      {badge !== undefined && (
+        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-zinc-400'
+          }`}>
+          {badge}
+        </span>
+      )}
     </button>
   );
 }
