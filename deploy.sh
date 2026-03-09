@@ -305,6 +305,36 @@ sudo chmod 644 "$CHILD_AUTOSTART_DIR/system-monitor.desktop"
 
 ok "Auto-démarrage configuré dans la session de $CHILD_DISPLAY_NAME"
 
+# Démarrer l'agent IMMÉDIATEMENT (pas besoin d'attendre le prochain login)
+# Tuer un éventuel ancien agent
+sudo pkill -f "python3.*guardian.py" 2>/dev/null || true
+sleep 1
+
+# Lancer l'agent en tant que l'utilisateur enfant (pour avoir accès à son display)
+if who | grep -q "$CHILD_USER"; then
+    # L'enfant est connecté — lancer dans sa session
+    CHILD_DISPLAY=$(who | grep "$CHILD_USER" | grep -o '(:[0-9]*)' | tr -d '()' | head -1)
+    CHILD_DISPLAY=${CHILD_DISPLAY:-":0"}
+    info "Session $CHILD_USER active (display $CHILD_DISPLAY), lancement de l'agent..."
+    sudo -u "$CHILD_USER" bash -c "export DISPLAY=$CHILD_DISPLAY; nohup python3 $INSTALL_DIR/guardian.py > /tmp/guardian-agent.log 2>&1 &"
+    sleep 2
+    if pgrep -f "guardian.py" > /dev/null; then
+        ok "Agent Guardian démarré dans la session de $CHILD_DISPLAY_NAME"
+    else
+        warn "L'agent n'a pas pu démarrer — il se lancera au prochain login"
+    fi
+else
+    # L'enfant n'est pas connecté — lancer en root (sera relancé au login)
+    info "$CHILD_USER n'est pas connecté, lancement en mode service..."
+    sudo nohup python3 "$INSTALL_DIR/guardian.py" > /tmp/guardian-agent.log 2>&1 &
+    sleep 2
+    if pgrep -f "guardian.py" > /dev/null; then
+        ok "Agent Guardian démarré (sera relancé au login de $CHILD_DISPLAY_NAME)"
+    else
+        warn "L'agent se lancera au prochain login de $CHILD_DISPLAY_NAME"
+    fi
+fi
+
 # ============================================================
 # ÉTAPE 7 : Protection des fichiers
 # ============================================================
