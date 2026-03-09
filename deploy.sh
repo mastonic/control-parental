@@ -1,23 +1,33 @@
 #!/bin/bash
 # ============================================================
-# 🛡️ Guardian — Script de déploiement automatique
+# 🛡️ Guardian — Déploiement Contrôle Parental
 # ============================================================
-# Ce script installe TOUT le nécessaire sur le PC de l'enfant
-# et démarre le serveur dashboard accessible depuis le WiFi.
+# Installe le contrôle parental sur le PC Ubuntu de l'enfant.
+# 
+# ARCHITECTURE :
+#   - Les fichiers sont dans /opt/guardian/ (protégé, root only)
+#   - Le serveur dashboard tourne en service système (systemd)
+#   - L'agent se lance au login de la session "Weedleay"
+#   - L'enfant ne peut PAS arrêter ni supprimer Guardian
 #
-# USAGE :
-#   Sur le PC de l'enfant (Ubuntu) :
-#     curl -sL https://raw.githubusercontent.com/mastonic/control-parental/main/deploy.sh | bash
-#   OU :
-#     git clone https://github.com/mastonic/control-parental.git
-#     cd control-parental && chmod +x deploy.sh && ./deploy.sh
+# USAGE (exécuter depuis une session PARENT avec accès sudo) :
+#   git clone https://github.com/mastonic/control-parental.git
+#   cd control-parental && chmod +x deploy.sh && ./deploy.sh
 #
 # ACCÈS DASHBOARD :
-#   - Depuis le même WiFi : http://<IP_DU_PC>:3000
-#   - Depuis mobile : même URL dans le navigateur du téléphone
+#   📱 Mobile (même WiFi) : http://<IP>:3000
+#   💻 PC parent          : http://localhost:3000
 # ============================================================
 
 set -e
+
+# ============== CONFIG ==============
+CHILD_USER="weedleay"          # Nom de la session Linux de l'enfant (en minuscule)
+CHILD_DISPLAY_NAME="Weedleay"  # Nom affiché dans les alertes
+INSTALL_DIR="/opt/guardian"    # Dossier protégé (root only)
+REPO_URL="https://github.com/mastonic/control-parental.git"
+SERVER_PORT=3000
+# ====================================
 
 # Couleurs
 RED='\033[0;31m'
@@ -28,235 +38,303 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 BOLD='\033[1m'
 
-print_banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════╗"
-    echo "║   🛡️  Guardian — Contrôle Parental Ubuntu       ║"
-    echo "║   Script de déploiement automatique             ║"
-    echo "╚══════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-}
-
 step() {
     echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}${GREEN}▶ $1${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
-warn() {
-    echo -e "${YELLOW}  ⚠️  $1${NC}"
-}
-
-ok() {
-    echo -e "${GREEN}  ✅ $1${NC}"
-}
-
-fail() {
-    echo -e "${RED}  ❌ $1${NC}"
-}
-
-info() {
-    echo -e "${CYAN}  ℹ️  $1${NC}"
-}
+ok()   { echo -e "${GREEN}  ✅ $1${NC}"; }
+warn() { echo -e "${YELLOW}  ⚠️  $1${NC}"; }
+fail() { echo -e "${RED}  ❌ $1${NC}"; exit 1; }
+info() { echo -e "${CYAN}  ℹ️  $1${NC}"; }
 
 # ============================================================
+# Vérifications préliminaires
+# ============================================================
+echo -e "${CYAN}"
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║  🛡️  Guardian — Contrôle Parental pour Ubuntu        ║"
+echo "║  Déploiement automatique                            ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo -e "${NC}"
 
-print_banner
+# Vérifier qu'on a les droits sudo
+if ! sudo -n true 2>/dev/null; then
+    info "Ce script nécessite les droits administrateur (sudo)."
+    sudo true || fail "Droits sudo requis."
+fi
 
-INSTALL_DIR="$HOME/control-parental"
+# Vérifier que la session enfant existe
+if ! id "$CHILD_USER" &>/dev/null; then
+    warn "L'utilisateur '$CHILD_USER' n'existe pas encore."
+    echo -e "  Utilisateurs disponibles :"
+    awk -F: '$3 >= 1000 && $1 != "nobody" { print "    - " $1 }' /etc/passwd
+    echo ""
+    read -p "  Quel est le nom d'utilisateur de l'enfant ? " CHILD_USER
+    CHILD_USER=$(echo "$CHILD_USER" | tr '[:upper:]' '[:lower:]')
+    if ! id "$CHILD_USER" &>/dev/null; then
+        fail "L'utilisateur '$CHILD_USER' n'existe pas."
+    fi
+fi
+
+CHILD_HOME=$(eval echo "~$CHILD_USER")
+ok "Session enfant trouvée : $CHILD_USER ($CHILD_HOME)"
 
 # ============================================================
 # ÉTAPE 1 : Dépendances système
 # ============================================================
-step "Étape 1/7 — Installation des dépendances système"
+step "Étape 1/8 — Dépendances système"
 
-sudo apt update -qq 2>/dev/null
+sudo apt update -qq 2>/dev/null || true
 
-PACKAGES="xdotool gnome-screenshot zenity python3-requests python3-tk git curl"
+PACKAGES="xdotool gnome-screenshot zenity python3-requests python3-tk git curl nodejs npm"
 for pkg in $PACKAGES; do
-    if dpkg -l "$pkg" &>/dev/null; then
-        ok "$pkg déjà installé"
+    if dpkg -s "$pkg" &>/dev/null 2>&1; then
+        ok "$pkg ✓"
     else
         info "Installation de $pkg..."
-        sudo apt install -y -qq "$pkg" 2>/dev/null && ok "$pkg installé" || warn "$pkg non disponible (optionnel)"
+        sudo apt install -y -qq "$pkg" 2>/dev/null && ok "$pkg installé" || warn "$pkg optionnel"
     fi
 done
 
 # ============================================================
-# ÉTAPE 2 : Node.js
+# ÉTAPE 2 : Node.js (version récente si nécessaire)
 # ============================================================
-step "Étape 2/7 — Vérification de Node.js"
+step "Étape 2/8 — Node.js"
 
+# Vérifier si Node.js est assez récent (v18+)
+NODE_OK=false
 if command -v node &>/dev/null; then
-    NODE_VERSION=$(node --version)
-    ok "Node.js $NODE_VERSION déjà installé"
-else
-    info "Installation de Node.js via nvm..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-    
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    
-    nvm install --lts
-    nvm use --lts
+    NODE_MAJOR=$(node --version | cut -d. -f1 | tr -d 'v')
+    if [ "$NODE_MAJOR" -ge 18 ] 2>/dev/null; then
+        ok "Node.js $(node --version) ✓"
+        NODE_OK=true
+    else
+        warn "Node.js $(node --version) trop ancien, mise à jour..."
+    fi
+fi
+
+if [ "$NODE_OK" = false ]; then
+    # Installer Node.js 20 via NodeSource
+    info "Installation de Node.js 20..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null
+    sudo apt install -y -qq nodejs 2>/dev/null
     ok "Node.js $(node --version) installé"
 fi
 
-# S'assurer que npm est dans le PATH
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" 2>/dev/null
-
 # ============================================================
-# ÉTAPE 3 : Cloner / Mettre à jour le projet
+# ÉTAPE 3 : Installation des fichiers dans /opt/guardian
 # ============================================================
-step "Étape 3/7 — Récupération du projet"
+step "Étape 3/8 — Installation des fichiers"
 
-if [ -d "$INSTALL_DIR/.git" ]; then
-    info "Projet existant, mise à jour..."
+# Créer le dossier protégé
+sudo mkdir -p "$INSTALL_DIR"
+
+# Copier les fichiers depuis le dossier courant ou cloner
+if [ -f "package.json" ] && [ -f "guardian.py" ]; then
+    info "Copie depuis le dossier courant..."
+    sudo cp -r . "$INSTALL_DIR/"
+    # Nettoyer les fichiers git et node_modules du source
+    sudo rm -rf "$INSTALL_DIR/.git" "$INSTALL_DIR/node_modules"
+    ok "Fichiers copiés"
+elif [ -d "$INSTALL_DIR/.git" ]; then
+    info "Mise à jour depuis Git..."
     cd "$INSTALL_DIR"
-    git pull origin main 2>/dev/null && ok "Projet mis à jour" || warn "Impossible de mettre à jour (modifications locales ?)"
+    sudo git pull origin main 2>/dev/null || warn "Pull échoué"
+    ok "Fichiers mis à jour"
 else
-    if [ -d "$INSTALL_DIR" ]; then
-        warn "Dossier existant sans git, sauvegarde..."
-        mv "$INSTALL_DIR" "${INSTALL_DIR}.backup.$(date +%s)"
-    fi
-    info "Clonage du projet..."
-    git clone https://github.com/mastonic/control-parental.git "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    ok "Projet cloné dans $INSTALL_DIR"
+    info "Clonage du dépôt..."
+    sudo rm -rf "$INSTALL_DIR"
+    sudo git clone "$REPO_URL" "$INSTALL_DIR"
+    ok "Projet cloné"
 fi
+
+# ============================================================
+# ÉTAPE 4 : Dépendances Node.js
+# ============================================================
+step "Étape 4/8 — Dépendances Node.js"
 
 cd "$INSTALL_DIR"
+sudo npm install --silent 2>/dev/null
+ok "Dépendances installées"
 
-# ============================================================
-# ÉTAPE 4 : Installation des dépendances Node.js
-# ============================================================
-step "Étape 4/7 — Installation des dépendances Node.js"
-
-npm install --silent 2>/dev/null
-ok "Dépendances installées ($(ls node_modules | wc -l) packages)"
-
-# ============================================================
-# ÉTAPE 5 : Configuration du fichier .env
-# ============================================================
-step "Étape 5/7 — Configuration"
-
-if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        cp .env.example .env
-        ok "Fichier .env créé depuis .env.example"
+# Fichier .env
+if [ ! -f "$INSTALL_DIR/.env" ]; then
+    if [ -f "$INSTALL_DIR/.env.example" ]; then
+        sudo cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
     else
-        echo "# Guardian Config" > .env
-        ok "Fichier .env créé"
+        echo "# Guardian" | sudo tee "$INSTALL_DIR/.env" > /dev/null
     fi
-else
-    ok "Fichier .env existant conservé"
+    ok "Fichier .env créé"
 fi
 
 # ============================================================
-# ÉTAPE 6 : Installation de l'agent Guardian (auto-start)
+# ÉTAPE 5 : Service système pour le Dashboard (systemd)
 # ============================================================
-step "Étape 6/7 — Installation de l'agent Guardian"
+step "Étape 5/8 — Service Dashboard (systemd)"
 
-python3 guardian.py --install
-ok "Agent Guardian configuré en démarrage automatique"
+# Trouver le chemin complet de node et npm
+NODE_PATH=$(which node)
+NPX_PATH=$(which npx)
+NPM_PATH=$(which npm)
 
-# ============================================================
-# ÉTAPE 7 : Démarrage du serveur Dashboard
-# ============================================================
-step "Étape 7/7 — Démarrage du serveur Dashboard"
+sudo tee /etc/systemd/system/guardian-dashboard.service > /dev/null << SERVICEEOF
+[Unit]
+Description=Guardian Parental Dashboard
+After=network.target
+Wants=network-online.target
 
-# Tuer les anciens processus sur le port 3000
-fuser -k 3000/tcp 2>/dev/null || true
-sleep 1
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$NODE_PATH $INSTALL_DIR/node_modules/.bin/tsx $INSTALL_DIR/server.ts
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=development
+Environment=PORT=$SERVER_PORT
+EnvironmentFile=-$INSTALL_DIR/.env
 
-# Démarrer le serveur en arrière-plan
-nohup npm run dev > /tmp/guardian-server.log 2>&1 &
-SERVER_PID=$!
+# Sécurité
+ProtectSystem=strict
+ReadWritePaths=$INSTALL_DIR
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable guardian-dashboard.service
+sudo systemctl restart guardian-dashboard.service
 sleep 3
 
-# Vérifier que le serveur a démarré
-if kill -0 $SERVER_PID 2>/dev/null; then
-    ok "Serveur Dashboard démarré (PID: $SERVER_PID)"
+if sudo systemctl is-active --quiet guardian-dashboard.service; then
+    ok "Service Dashboard actif et démarré"
 else
-    fail "Échec du démarrage du serveur"
-    echo "  Consultez les logs : cat /tmp/guardian-server.log"
+    warn "Le service n'a pas démarré, tentative alternative..."
+    # Fallback : lancer directement
+    cd "$INSTALL_DIR"
+    sudo fuser -k $SERVER_PORT/tcp 2>/dev/null || true
+    sleep 1
+    sudo nohup $NODE_PATH "$INSTALL_DIR/node_modules/.bin/tsx" "$INSTALL_DIR/server.ts" > /tmp/guardian-server.log 2>&1 &
+    sleep 2
+    if fuser $SERVER_PORT/tcp &>/dev/null; then
+        ok "Dashboard démarré (mode fallback)"
+    else
+        warn "Dashboard non démarré — vérifiez : sudo journalctl -u guardian-dashboard"
+    fi
 fi
 
-# Démarrer l'agent Guardian en arrière-plan
-nohup python3 guardian.py > /tmp/guardian-agent.log 2>&1 &
-AGENT_PID=$!
+# ============================================================
+# ÉTAPE 6 : Agent Guardian dans la session de l'enfant
+# ============================================================
+step "Étape 6/8 — Agent Guardian pour la session $CHILD_DISPLAY_NAME"
+
+CHILD_AUTOSTART_DIR="$CHILD_HOME/.config/autostart"
+sudo mkdir -p "$CHILD_AUTOSTART_DIR"
+
+# Créer le fichier .desktop d'autostart (nom discret)
+sudo tee "$CHILD_AUTOSTART_DIR/system-monitor.desktop" > /dev/null << DESKTOPEOF
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=System performance monitoring service
+Exec=/usr/bin/python3 $INSTALL_DIR/guardian.py
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10
+StartupNotify=false
+Terminal=false
+DESKTOPEOF
+
+# Propriété : root (l'enfant ne peut pas le supprimer)
+sudo chown root:root "$CHILD_AUTOSTART_DIR/system-monitor.desktop"
+sudo chmod 644 "$CHILD_AUTOSTART_DIR/system-monitor.desktop"
+
+ok "Auto-démarrage configuré dans la session de $CHILD_DISPLAY_NAME"
+
+# ============================================================
+# ÉTAPE 7 : Protection des fichiers
+# ============================================================
+step "Étape 7/8 — Protection contre la suppression"
+
+# Protéger les fichiers critiques avec chattr +i (immutable)
+PROTECT_FILES=(
+    "$INSTALL_DIR/guardian.py"
+    "$INSTALL_DIR/blocker_overlay.py"
+    "$CHILD_AUTOSTART_DIR/system-monitor.desktop"
+)
+
+for f in "${PROTECT_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        sudo chattr +i "$f" 2>/dev/null && ok "Protégé : $(basename $f)" || warn "Protection impossible : $(basename $f)"
+    fi
+done
+
+# Protéger le dossier /opt/guardian
+sudo chown -R root:root "$INSTALL_DIR"
+sudo chmod -R 755 "$INSTALL_DIR"
+# Le dossier node_modules et la db doivent être accessibles en écriture
+sudo chmod -R 777 "$INSTALL_DIR/node_modules" 2>/dev/null || true
+sudo chmod 666 "$INSTALL_DIR/monitor.db" 2>/dev/null || true
+# Créer la db si elle n'existe pas pour donner les bonnes permissions
+touch "$INSTALL_DIR/monitor.db" 2>/dev/null || sudo touch "$INSTALL_DIR/monitor.db"
+sudo chmod 666 "$INSTALL_DIR/monitor.db"
+
+ok "Fichiers protégés (l'enfant ne peut pas les supprimer)"
+
+# ============================================================
+# ÉTAPE 8 : Vérification finale
+# ============================================================
+step "Étape 8/8 — Vérification"
+
+# Tester le serveur
 sleep 2
-
-if kill -0 $AGENT_PID 2>/dev/null; then
-    ok "Agent Guardian démarré (PID: $AGENT_PID)"
+if curl -s "http://localhost:$SERVER_PORT/api/health" | grep -q "ok"; then
+    ok "Dashboard accessible ✓"
 else
-    warn "L'agent n'a pas pu démarrer (sera actif au prochain login)"
+    warn "Dashboard non accessible — vérifiez les logs"
 fi
-
-# ============================================================
-# RÉSUMÉ FINAL
-# ============================================================
 
 # Récupérer l'IP locale
 LOCAL_IP=$(hostname -I | awk '{print $1}')
-HOSTNAME=$(hostname)
+HOSTNAME_LOCAL=$(hostname)
 
 echo ""
-echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}${GREEN}🎉 Installation terminée !${NC}                       ${CYAN}║${NC}"
-echo -e "${CYAN}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}📱 Accès Dashboard depuis le mobile :${NC}            ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${YELLOW}http://${LOCAL_IP}:3000${NC}"
-echo -e "${CYAN}║${NC}  ${YELLOW}http://${HOSTNAME}.local:3000${NC}"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}🌐 Accès Cloud (partout) :${NC}                       ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${YELLOW}Déployez sur Google Cloud Run${NC}                     ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}📋 Commandes utiles :${NC}                             ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  Logs serveur : tail -f /tmp/guardian-server.log  ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  Logs agent   : tail -f /tmp/guardian-agent.log   ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  Test agent   : python3 guardian.py --test        ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  Stopper      : kill $SERVER_PID $AGENT_PID"
-echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
-echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}${GREEN}🎉 Installation terminée avec succès !${NC}                  ${CYAN}║${NC}"
+echo -e "${CYAN}╠══════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}👤 Session enfant :${NC} ${YELLOW}$CHILD_USER${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}📂 Fichiers       :${NC} $INSTALL_DIR"
+echo -e "${CYAN}║${NC}  ${BOLD}🔒 Protection     :${NC} Les fichiers sont verrouillés"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}╠══════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}📱 Dashboard depuis le téléphone (même WiFi) :${NC}          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}     ${BOLD}${YELLOW}http://${LOCAL_IP}:${SERVER_PORT}${NC}"
+echo -e "${CYAN}║${NC}     ${YELLOW}http://${HOSTNAME_LOCAL}.local:${SERVER_PORT}${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}╠══════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}🔧 Commandes utiles (depuis session parent) :${NC}           ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  Statut     : sudo systemctl status guardian-dashboard    ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  Logs       : sudo journalctl -u guardian-dashboard -f    ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  Redémarrer : sudo systemctl restart guardian-dashboard   ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  Arrêter    : sudo systemctl stop guardian-dashboard      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}🗑️  Désinstaller :${NC}                                      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  sudo systemctl disable guardian-dashboard                ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  sudo chattr -i -R $INSTALL_DIR"
+echo -e "${CYAN}║${NC}  sudo rm -rf $INSTALL_DIR"
+echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}${BOLD}👉 Ouvrez cette URL sur votre téléphone :${NC}"
-echo -e "${BOLD}${YELLOW}   http://${LOCAL_IP}:3000${NC}"
+echo -e "${GREEN}${BOLD}📱 Ouvrez sur votre téléphone :  http://${LOCAL_IP}:${SERVER_PORT}${NC}"
 echo ""
-echo -e "${CYAN}ℹ️  Le serveur et l'agent se relanceront automatiquement${NC}"
-echo -e "${CYAN}   au prochain démarrage du PC.${NC}"
-
-# Créer un script de démarrage rapide pour le serveur (cron @reboot)
-STARTUP_SCRIPT="$INSTALL_DIR/start-guardian.sh"
-cat > "$STARTUP_SCRIPT" << 'STARTEOF'
-#!/bin/bash
-# Guardian — Script de démarrage rapide
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-cd ~/control-parental
-
-# Démarrer le serveur si pas déjà en cours
-if ! fuser 3000/tcp &>/dev/null; then
-    nohup npm run dev > /tmp/guardian-server.log 2>&1 &
-fi
-
-# Démarrer l'agent si pas déjà en cours
-if ! pgrep -f "guardian.py" &>/dev/null; then
-    sleep 5
-    nohup python3 guardian.py > /tmp/guardian-agent.log 2>&1 &
-fi
-STARTEOF
-chmod +x "$STARTUP_SCRIPT"
-
-# Ajouter à crontab @reboot si pas déjà présent
-(crontab -l 2>/dev/null | grep -v "start-guardian.sh"; echo "@reboot $STARTUP_SCRIPT") | crontab -
-ok "Démarrage automatique configuré (cron @reboot)"
-
+echo -e "${CYAN}Quand ${CHILD_DISPLAY_NAME} se connectera, Guardian démarrera"
+echo -e "automatiquement et en silence. Il ne peut pas l'arrêter. 🛡️${NC}"
 echo ""
-echo -e "${GREEN}${BOLD}✅ Tout est prêt ! Weedleay est surveillé. 🛡️${NC}"
