@@ -65,6 +65,24 @@ if ! sudo -n true 2>/dev/null; then
     sudo true || fail "Droits sudo requis."
 fi
 
+# ============================================================
+# Déverrouiller une installation précédente (si elle existe)
+# ============================================================
+if [ -d "$INSTALL_DIR" ]; then
+    info "Installation précédente détectée, déverrouillage..."
+    # Retirer les flags immutables de TOUS les fichiers protégés
+    sudo chattr -i "$INSTALL_DIR/guardian.py" 2>/dev/null || true
+    sudo chattr -i "$INSTALL_DIR/blocker_overlay.py" 2>/dev/null || true
+    sudo chattr -i -R "$INSTALL_DIR" 2>/dev/null || true
+    # Déverrouiller aussi l'autostart de l'enfant (on ne connaît pas encore CHILD_HOME ici)
+    for d in /home/*/.config/autostart; do
+        sudo chattr -i "$d/system-monitor.desktop" 2>/dev/null || true
+    done
+    # Arrêter le service s'il tourne
+    sudo systemctl stop guardian-dashboard.service 2>/dev/null || true
+    ok "Installation précédente déverrouillée"
+fi
+
 # Vérifier que la session enfant existe
 if ! id "$CHILD_USER" &>/dev/null; then
     warn "L'utilisateur '$CHILD_USER' n'existe pas encore."
