@@ -323,16 +323,30 @@ def block_loop():
                 if keyword in title_lower:
                     log(f"🚫 BLOQUÉ : '{keyword}' dans '{title[:50]}'")
                     
-                    # 1. Afficher l'écran de blocage plein écran
+                    # 1. Capturer la preuve AVANT de bloquer
+                    evidence = capture_screenshot()
+                    
+                    # 2. Envoyer le rapport de blocage au serveur
+                    try:
+                        send_request("POST", "/api/block-event", {
+                            "window_title": title,
+                            "keyword": keyword,
+                            "screenshot": evidence
+                        })
+                        log(f"   📤 Rapport de blocage envoyé")
+                    except:
+                        pass
+                    
+                    # 3. Afficher l'écran de blocage plein écran
                     show_block_overlay(keyword)
                     
-                    # 2. Petite pause pour que l'overlay apparaisse au-dessus
+                    # 4. Petite pause pour que l'overlay apparaisse au-dessus
                     time.sleep(0.5)
                     
-                    # 3. Fermer la fenêtre interdite
+                    # 5. Fermer la fenêtre interdite
                     close_window(wid)
                     
-                    # 4. Pause pour éviter les boucles rapides
+                    # 6. Pause pour éviter les boucles rapides
                     time.sleep(3)
                     break
                     

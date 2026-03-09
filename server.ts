@@ -48,6 +48,13 @@ try {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       keyword TEXT UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS block_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      window_title TEXT,
+      keyword TEXT,
+      screenshot TEXT
+    );
   `);
 } catch (err) {
   console.error("Failed to run migrations:", err);
@@ -61,7 +68,7 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
-  
+
   app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
@@ -133,7 +140,7 @@ async function startServer() {
     if (keyword) {
       try {
         db.prepare("INSERT INTO blocklist (keyword) VALUES (?)").run(keyword);
-      } catch (e) {}
+      } catch (e) { }
     }
     res.json({ status: "ok" });
   });
@@ -147,10 +154,36 @@ async function startServer() {
     }
   });
 
+  // Block events (historique des blocages)
+  app.get(["/api/block-events", "/api/block-events/"], (req, res) => {
+    try {
+      const events = db.prepare("SELECT * FROM block_events ORDER BY timestamp DESC LIMIT 100").all();
+      res.json(events || []);
+    } catch (err) {
+      console.error("Database error in /api/block-events:", err);
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
+  app.post("/api/block-event", (req, res) => {
+    const { window_title, keyword, screenshot } = req.body;
+    try {
+      db.prepare("INSERT INTO block_events (window_title, keyword, screenshot) VALUES (?, ?, ?)")
+        .run(window_title || "Unknown", keyword || "Unknown", screenshot || null);
+      // Garder max 100 événements
+      db.prepare("DELETE FROM block_events WHERE id NOT IN (SELECT id FROM block_events ORDER BY timestamp DESC LIMIT 100)").run();
+      res.json({ status: "ok" });
+    } catch (err) {
+      console.error("Block event error:", err);
+      res.status(500).json({ error: "Failed" });
+    }
+  });
+
   app.delete("/api/clear", (req, res) => {
     try {
       db.prepare("DELETE FROM activity").run();
       db.prepare("DELETE FROM screenshots").run();
+      db.prepare("DELETE FROM block_events").run();
       res.json({ status: "ok" });
     } catch (err) {
       res.status(500).json({ error: "Clear failed" });
@@ -168,7 +201,7 @@ async function startServer() {
       const vite = await createViteServer({
         configFile: false,
         root: process.cwd(),
-        server: { 
+        server: {
           middlewareMode: true,
         },
         plugins: [react(), tailwindcss()],
@@ -183,7 +216,7 @@ async function startServer() {
         appType: "spa",
       });
       app.use(vite.middlewares);
-      
+
       // Explicit root route for development
       app.get("/", async (req, res) => {
         try {
@@ -201,7 +234,7 @@ async function startServer() {
       app.get("*", async (req, res, next) => {
         // Skip API routes
         if (req.url.startsWith("/api")) return next();
-        
+
         try {
           const indexPath = path.join(process.cwd(), "index.html");
           console.log(`Serving index.html from: ${indexPath}`);
@@ -214,7 +247,7 @@ async function startServer() {
           res.status(500).end(`Vite Error: ${e.message}`);
         }
       });
-      
+
       console.log("Vite middleware loaded successfully");
     } catch (viteErr) {
       console.error("Failed to start Vite:", viteErr);
@@ -222,14 +255,14 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     const indexPath = path.join(distPath, "index.html");
-    
+
     console.log(`Production mode: serving static files from ${distPath}`);
-    
+
     app.use(express.static(distPath));
-    
+
     app.get("*", async (req, res) => {
       if (req.url.startsWith("/api")) return res.status(404).json({ error: "API not found" });
-      
+
       try {
         await fs.access(indexPath);
         res.sendFile(indexPath);

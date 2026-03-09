@@ -48,6 +48,14 @@ interface BlockedItem {
   keyword: string;
 }
 
+interface BlockEvent {
+  id: number;
+  timestamp: string;
+  window_title: string;
+  keyword: string;
+  screenshot: string | null;
+}
+
 // Category presets for blocklist
 const CATEGORY_PRESETS = [
   { label: 'YouTube', icon: Youtube, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20', examples: 'MrBeast, PewDiePie, Squeezie...' },
@@ -74,6 +82,7 @@ export default function App() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [blocklist, setBlocklist] = useState<BlockedItem[]>([]);
+  const [blockEvents, setBlockEvents] = useState<BlockEvent[]>([]);
   const [newKeyword, setNewKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -83,6 +92,7 @@ export default function App() {
   const [selectedScreenshot, setSelectedScreenshot] = useState<Screenshot | null>(null);
   const [screenshotSearch, setScreenshotSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedBlockEvent, setSelectedBlockEvent] = useState<BlockEvent | null>(null);
 
   const fetchLogs = async () => {
     try {
@@ -117,9 +127,20 @@ export default function App() {
     }
   };
 
+  const fetchBlockEvents = async () => {
+    try {
+      const res = await fetch('/api/block-events');
+      if (!res.ok) return;
+      const data = await res.json();
+      setBlockEvents(data);
+    } catch (err) {
+      console.error('Failed to fetch block events', err);
+    }
+  };
+
   const refreshAll = async () => {
     setLoading(true);
-    await Promise.all([fetchLogs(), fetchScreenshots(), fetchBlocklist()]);
+    await Promise.all([fetchLogs(), fetchScreenshots(), fetchBlocklist(), fetchBlockEvents()]);
     setLastRefresh(new Date());
     setLoading(false);
   };
@@ -211,10 +232,11 @@ export default function App() {
         if (e.key === 'Escape') setSelectedScreenshot(null);
       }
       if (selectedLog && e.key === 'Escape') setSelectedLog(null);
+      if (selectedBlockEvent && e.key === 'Escape') setSelectedBlockEvent(null);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedScreenshot, selectedLog]);
+  }, [selectedScreenshot, selectedLog, selectedBlockEvent]);
 
   const agentScript = `
 import subprocess
@@ -533,6 +555,92 @@ if __name__ == "__main__":
             </div>
           </motion.div>
         )}
+
+        {/* Block Event Detail Modal */}
+        {selectedBlockEvent && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-4"
+            onClick={() => setSelectedBlockEvent(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#111111] border border-red-500/20 rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl shadow-red-500/10"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-red-500/20 rounded-full flex items-center justify-center">
+                    <Ban className="w-4 h-4 text-red-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-bold text-sm">Tentative bloquée</h3>
+                    <p className="text-red-400 text-xs">
+                      {new Date(selectedBlockEvent.timestamp).toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+                      {' à '}
+                      {new Date(selectedBlockEvent.timestamp).toLocaleTimeString('fr-FR')}
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedBlockEvent(null)} className="p-2 hover:bg-white/10 rounded-full transition-all">
+                  <X className="w-5 h-5 text-zinc-400" />
+                </button>
+              </div>
+
+              {/* Screenshot */}
+              {selectedBlockEvent.screenshot && (
+                <div className="relative">
+                  <img
+                    src={`data:image/png;base64,${selectedBlockEvent.screenshot}`}
+                    alt="Capture au moment du blocage"
+                    className="w-full max-h-[50vh] object-contain bg-black"
+                  />
+                  <div className="absolute top-3 right-3 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-full uppercase tracking-wider animate-pulse">
+                    🚫 Bloqué
+                  </div>
+                </div>
+              )}
+
+              {/* Details */}
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-black/40 rounded-xl p-4">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Motif du blocage</p>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const cat = getCategoryForKeyword(selectedBlockEvent.keyword);
+                        return (
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 ${cat.bg} border ${cat.border} rounded-full text-sm font-bold ${cat.color}`}>
+                            <cat.icon className="w-4 h-4" />
+                            {selectedBlockEvent.keyword}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <div className="bg-black/40 rounded-xl p-4">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Date et heure</p>
+                    <p className="text-white text-sm font-medium flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-zinc-500" />
+                      {new Date(selectedBlockEvent.timestamp).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                      {' — '}
+                      {new Date(selectedBlockEvent.timestamp).toLocaleTimeString('fr-FR')}
+                    </p>
+                  </div>
+                </div>
+                <div className="bg-black/40 rounded-xl p-4">
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Fenêtre / Site bloqué</p>
+                  <p className="text-zinc-300 text-sm">{selectedBlockEvent.window_title}</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Sidebar */}
@@ -824,8 +932,8 @@ if __name__ == "__main__":
                         <button
                           onClick={() => setSelectedCategory(null)}
                           className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${selectedCategory === null
-                              ? 'bg-white/10 text-white border border-white/10'
-                              : 'text-zinc-500 hover:bg-white/5'
+                            ? 'bg-white/10 text-white border border-white/10'
+                            : 'text-zinc-500 hover:bg-white/5'
                             }`}
                         >
                           <Tag className="w-4 h-4" />
@@ -839,8 +947,8 @@ if __name__ == "__main__":
                               key={cat.label}
                               onClick={() => setSelectedCategory(selectedCategory === cat.label ? null : cat.label)}
                               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${selectedCategory === cat.label
-                                  ? `${cat.bg} ${cat.color} border ${cat.border}`
-                                  : 'text-zinc-500 hover:bg-white/5'
+                                ? `${cat.bg} ${cat.color} border ${cat.border}`
+                                : 'text-zinc-500 hover:bg-white/5'
                                 }`}
                             >
                               <cat.icon className="w-4 h-4" />
@@ -931,8 +1039,8 @@ if __name__ == "__main__":
                                       fetchBlocklist();
                                     }}
                                     className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isBlocked
-                                        ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed line-through'
-                                        : `border border-white/10 text-zinc-400 hover:${cat.bg} hover:${cat.color} hover:${cat.border}`
+                                      ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed line-through'
+                                      : `border border-white/10 text-zinc-400 hover:${cat.bg} hover:${cat.color} hover:${cat.border}`
                                       }`}
                                   >
                                     {isBlocked ? '✓ ' : '+ '}{suggestion}
@@ -945,6 +1053,78 @@ if __name__ == "__main__":
                       </div>
                     </div>
                   </div>
+                </div>
+
+                {/* Block Events History */}
+                <div className="bg-[#111111] border border-white/5 rounded-2xl overflow-hidden">
+                  <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-500" />
+                      Historique des blocages
+                    </h4>
+                    <span className="text-xs text-zinc-500">{blockEvents.length} événement(s)</span>
+                  </div>
+
+                  {blockEvents.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <ShieldCheck className="w-10 h-10 text-emerald-700 mx-auto mb-3" />
+                      <p className="text-zinc-500 text-sm">Aucun blocage enregistré.</p>
+                      <p className="text-zinc-600 text-xs mt-1">Les tentatives d'accès à du contenu interdit apparaîtront ici.</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {blockEvents.map((event) => {
+                        const cat = getCategoryForKeyword(event.keyword);
+                        return (
+                          <motion.div
+                            key={event.id}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="p-4 hover:bg-white/[0.02] transition-all cursor-pointer"
+                            onClick={() => setSelectedBlockEvent(event)}
+                          >
+                            <div className="flex items-start gap-4">
+                              {/* Thumbnail */}
+                              <div className="w-20 h-14 bg-black rounded-lg overflow-hidden border border-white/10 shrink-0 flex items-center justify-center">
+                                {event.screenshot ? (
+                                  <img
+                                    src={`data:image/png;base64,${event.screenshot}`}
+                                    alt="Capture blocage"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <Ban className="w-5 h-5 text-zinc-700" />
+                                )}
+                              </div>
+
+                              {/* Content */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 ${cat.bg} border ${cat.border} rounded-full text-[10px] font-bold ${cat.color}`}>
+                                    <cat.icon className="w-3 h-3" />
+                                    {event.keyword}
+                                  </span>
+                                  <span className="text-red-500 text-[10px] font-bold uppercase tracking-widest">BLOQUÉ</span>
+                                </div>
+                                <p className="text-sm text-zinc-300 truncate">{event.window_title}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Clock className="w-3 h-3 text-zinc-600" />
+                                  <span className="text-[11px] text-zinc-500">
+                                    {new Date(event.timestamp).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                    {' à '}
+                                    {new Date(event.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Arrow */}
+                              <Eye className="w-4 h-4 text-zinc-600 shrink-0 mt-2" />
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -1092,8 +1272,8 @@ function NavItem({ active, onClick, icon, label, badge }: { active: boolean, onC
     <button
       onClick={onClick}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${active
-          ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-          : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+        ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+        : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
         }`}
     >
       {icon}
