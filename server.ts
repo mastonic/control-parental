@@ -1,10 +1,7 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,7 +15,6 @@ try {
   console.log("Database initialized successfully");
 } catch (err) {
   console.error("Failed to initialize database:", err);
-  // Fallback to in-memory if disk is not writable (though it should be)
   db = new Database(":memory:");
   console.log("Using in-memory database fallback");
 }
@@ -50,27 +46,16 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // 1. MIDDLEWARES DE BASE
   app.use(express.json({ limit: '10mb' }));
   
-  // Logger pour le débug
   app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
   });
 
-  // 2. ROUTES API (PRIORITÉ MAXIMALE)
+  // API ROUTES
   app.get("/health", (req, res) => {
-    res.json({ 
-      status: "ok", 
-      env: process.env.NODE_ENV || "development",
-      time: new Date().toISOString(),
-      db: db ? "connected" : "error"
-    });
-  });
-
-  app.get("/api/test", (req, res) => {
-    res.json({ status: "ok", message: "API is working" });
+    res.json({ status: "ok", db: db ? "connected" : "error" });
   });
 
   app.get("/api/activity", (req, res) => {
@@ -138,19 +123,37 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // 3. VITE / STATIQUE (EN DERNIER)
+  // VITE SETUP
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      configFile: false,
-      root: process.cwd(),
-      plugins: [react(), tailwindcss()],
-      define: {
-        'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY),
-      },
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const { default: react } = await import('@vitejs/plugin-react');
+      const { default: tailwindcss } = await import('@tailwindcss/vite');
+
+      const vite = await createViteServer({
+        configFile: false,
+        root: process.cwd(),
+        server: { 
+          middlewareMode: true,
+          host: '0.0.0.0',
+          port: 3000
+        },
+        plugins: [react(), tailwindcss()],
+        define: {
+          'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || ''),
+        },
+        resolve: {
+          alias: {
+            '@': path.resolve(__dirname, '.'),
+          },
+        },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite middleware loaded");
+    } catch (viteErr) {
+      console.error("Failed to start Vite:", viteErr);
+    }
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => {
@@ -163,4 +166,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("Server failed to start:", err);
+});
