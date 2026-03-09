@@ -19,7 +19,7 @@
 #   💻 PC parent          : http://localhost:3000
 # ============================================================
 
-set -e
+# Ne PAS utiliser set -e : on gère les erreurs nous-mêmes
 
 # ============== CONFIG ==============
 CHILD_USER="weedleay"          # Nom de la session Linux de l'enfant (en minuscule)
@@ -278,7 +278,23 @@ ok "Auto-démarrage configuré dans la session de $CHILD_DISPLAY_NAME"
 # ============================================================
 step "Étape 7/8 — Protection contre la suppression"
 
-# Protéger les fichiers critiques avec chattr +i (immutable)
+# D'abord, retirer TOUS les flags immutables (au cas où une précédente exécution les a posés)
+info "Déverrouillage complet avant re-protection..."
+sudo chattr -i -R "$INSTALL_DIR" 2>/dev/null || true
+sudo chattr -i "$CHILD_AUTOSTART_DIR/system-monitor.desktop" 2>/dev/null || true
+
+# Maintenant, on peut changer les propriétaires et permissions sans erreur
+sudo chown -R root:root "$INSTALL_DIR" 2>/dev/null || warn "chown partiel"
+sudo chmod -R 755 "$INSTALL_DIR" 2>/dev/null || true
+
+# Le dossier node_modules et la db doivent être accessibles en écriture
+sudo chmod -R 777 "$INSTALL_DIR/node_modules" 2>/dev/null || true
+
+# Créer la db si elle n'existe pas et donner les bonnes permissions
+sudo touch "$INSTALL_DIR/monitor.db" 2>/dev/null || true
+sudo chmod 666 "$INSTALL_DIR/monitor.db" 2>/dev/null || true
+
+# Enfin, protéger les fichiers critiques avec chattr +i (immutable)
 PROTECT_FILES=(
     "$INSTALL_DIR/guardian.py"
     "$INSTALL_DIR/blocker_overlay.py"
@@ -290,16 +306,6 @@ for f in "${PROTECT_FILES[@]}"; do
         sudo chattr +i "$f" 2>/dev/null && ok "Protégé : $(basename $f)" || warn "Protection impossible : $(basename $f)"
     fi
 done
-
-# Protéger le dossier /opt/guardian
-sudo chown -R root:root "$INSTALL_DIR"
-sudo chmod -R 755 "$INSTALL_DIR"
-# Le dossier node_modules et la db doivent être accessibles en écriture
-sudo chmod -R 777 "$INSTALL_DIR/node_modules" 2>/dev/null || true
-sudo chmod 666 "$INSTALL_DIR/monitor.db" 2>/dev/null || true
-# Créer la db si elle n'existe pas pour donner les bonnes permissions
-touch "$INSTALL_DIR/monitor.db" 2>/dev/null || sudo touch "$INSTALL_DIR/monitor.db"
-sudo chmod 666 "$INSTALL_DIR/monitor.db"
 
 ok "Fichiers protégés (l'enfant ne peut pas les supprimer)"
 
