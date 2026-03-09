@@ -49,6 +49,11 @@ export default function App() {
   const fetchLogs = async () => {
     try {
       const res = await fetch('/api/activity');
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Fetch logs failed with status ${res.status}: ${text}`);
+        return;
+      }
       const data = await res.json();
       setLogs(data);
     } catch (err) {
@@ -59,6 +64,11 @@ export default function App() {
   const fetchScreenshots = async () => {
     try {
       const res = await fetch('/api/screenshots');
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Fetch screenshots failed with status ${res.status}: ${text}`);
+        return;
+      }
       const data = await res.json();
       setScreenshots(data);
     } catch (err) {
@@ -69,6 +79,11 @@ export default function App() {
   const fetchBlocklist = async () => {
     try {
       const res = await fetch('/api/blocklist');
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Fetch blocklist failed with status ${res.status}: ${text}`);
+        return;
+      }
       const data = await res.json();
       setBlocklist(data);
     } catch (err) {

@@ -4,8 +4,18 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from 'dotenv';
 import fs from "fs/promises";
+import cors from "cors";
 
 dotenv.config();
+
+// Global error handlers to catch crashes
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +59,7 @@ async function startServer() {
 
   console.log("Starting server in mode:", process.env.NODE_ENV || "development");
 
+  app.use(cors());
   app.use(express.json({ limit: '10mb' }));
   
   app.use((req, res, next) => {
@@ -56,58 +67,50 @@ async function startServer() {
     next();
   });
 
-  // API ROUTER
-  const apiRouter = express.Router();
-
-  // Force JSON for all API responses
-  apiRouter.use((req, res, next) => {
-    res.setHeader("Content-Type", "application/json");
-    next();
-  });
-
-  apiRouter.get("/health", (req, res) => {
+  // API ROUTES
+  app.get("/api/health", (req, res) => {
     console.log("Health check requested");
     res.json({ status: "ok", db: db ? "connected" : "error" });
   });
 
-  apiRouter.get("/test", (req, res) => {
+  app.get("/api/test", (req, res) => {
     res.json({ status: "ok", message: "API is working" });
   });
 
-  apiRouter.get(["/activity", "/activity/"], (req, res) => {
+  app.get(["/api/activity", "/api/activity/"], (req, res) => {
     console.log("Fetching activity logs...");
     try {
       const logs = db.prepare("SELECT * FROM activity ORDER BY timestamp DESC LIMIT 100").all();
-      res.json(logs);
+      res.json(logs || []);
     } catch (err) {
       console.error("Database error in /api/activity:", err);
-      res.status(500).json({ error: "Database error" });
+      res.status(500).json({ error: "Database error", details: String(err) });
     }
   });
 
-  apiRouter.get(["/screenshots", "/screenshots/"], (req, res) => {
+  app.get(["/api/screenshots", "/api/screenshots/"], (req, res) => {
     console.log("Fetching screenshots...");
     try {
       const shots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 50").all();
-      res.json(shots);
+      res.json(shots || []);
     } catch (err) {
       console.error("Database error in /api/screenshots:", err);
-      res.status(500).json({ error: "Database error" });
+      res.status(500).json({ error: "Database error", details: String(err) });
     }
   });
 
-  apiRouter.get(["/blocklist", "/blocklist/"], (req, res) => {
+  app.get(["/api/blocklist", "/api/blocklist/"], (req, res) => {
     console.log("Fetching blocklist...");
     try {
       const list = db.prepare("SELECT * FROM blocklist").all();
-      res.json(list);
+      res.json(list || []);
     } catch (err) {
       console.error("Database error in /api/blocklist:", err);
-      res.status(500).json({ error: "Database error" });
+      res.status(500).json({ error: "Database error", details: String(err) });
     }
   });
 
-  apiRouter.post("/report", (req, res) => {
+  app.post("/api/report", (req, res) => {
     const { window_title, app_name, screenshot } = req.body;
     try {
       if (window_title || app_name) {
@@ -120,11 +123,12 @@ async function startServer() {
       }
       res.json({ status: "ok" });
     } catch (err) {
+      console.error("Report error:", err);
       res.status(500).json({ error: "Report failed" });
     }
   });
 
-  apiRouter.post("/blocklist", (req, res) => {
+  app.post("/api/blocklist", (req, res) => {
     const { keyword } = req.body;
     if (keyword) {
       try {
@@ -134,29 +138,29 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  apiRouter.delete("/blocklist/:id", (req, res) => {
-    db.prepare("DELETE FROM blocklist WHERE id = ?").run(req.params.id);
-    res.json({ status: "ok" });
+  app.delete("/api/blocklist/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM blocklist WHERE id = ?").run(req.params.id);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Delete failed" });
+    }
   });
 
-  apiRouter.delete("/clear", (req, res) => {
-    db.prepare("DELETE FROM activity").run();
-    db.prepare("DELETE FROM screenshots").run();
-    res.json({ status: "ok" });
+  app.delete("/api/clear", (req, res) => {
+    try {
+      db.prepare("DELETE FROM activity").run();
+      db.prepare("DELETE FROM screenshots").run();
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Clear failed" });
+    }
   });
-
-  // Catch-all for API router
-  apiRouter.use("*", (req, res) => {
-    console.warn(`API 404: ${req.method} ${req.url}`);
-    res.status(404).json({ error: "API route not found" });
-  });
-
-  // Mount API router
-  app.use("/api", apiRouter);
 
   // VITE SETUP
   if (process.env.NODE_ENV !== "production") {
     try {
+      console.log("Initializing Vite in development mode...");
       const { createServer: createViteServer } = await import('vite');
       const { default: react } = await import('@vitejs/plugin-react');
       const { default: tailwindcss } = await import('@tailwindcss/vite');
@@ -166,8 +170,6 @@ async function startServer() {
         root: process.cwd(),
         server: { 
           middlewareMode: true,
-          host: '0.0.0.0',
-          port: 3000
         },
         plugins: [react(), tailwindcss()],
         define: {
@@ -175,7 +177,7 @@ async function startServer() {
         },
         resolve: {
           alias: {
-            '@': path.resolve(__dirname, '.'),
+            '@': path.resolve(process.cwd(), '.'),
           },
         },
         appType: "spa",
@@ -188,24 +190,40 @@ async function startServer() {
         if (req.url.startsWith("/api")) return next();
         
         try {
-          const template = await fs.readFile(path.join(process.cwd(), "index.html"), "utf-8");
+          const indexPath = path.join(process.cwd(), "index.html");
+          console.log(`Serving index.html from: ${indexPath}`);
+          const template = await fs.readFile(indexPath, "utf-8");
           const html = await vite.transformIndexHtml(req.url, template);
           res.status(200).set({ "Content-Type": "text/html" }).end(html);
         } catch (e: any) {
           vite.ssrFixStacktrace(e);
           console.error("Vite transform error:", e);
-          res.status(500).end(e.message);
+          res.status(500).end(`Vite Error: ${e.message}`);
         }
       });
       
-      console.log("Vite middleware loaded");
+      console.log("Vite middleware loaded successfully");
     } catch (viteErr) {
       console.error("Failed to start Vite:", viteErr);
     }
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    const distPath = path.join(process.cwd(), "dist");
+    const indexPath = path.join(distPath, "index.html");
+    
+    console.log(`Production mode: serving static files from ${distPath}`);
+    
+    app.use(express.static(distPath));
+    
+    app.get("*", async (req, res) => {
+      if (req.url.startsWith("/api")) return res.status(404).json({ error: "API not found" });
+      
+      try {
+        await fs.access(indexPath);
+        res.sendFile(indexPath);
+      } catch (err) {
+        console.error(`Production error: index.html not found at ${indexPath}. Did you run 'npm run build'?`);
+        res.status(500).send("Application not built. Please run 'npm run build' first.");
+      }
     });
   }
 
