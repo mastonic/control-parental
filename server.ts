@@ -62,7 +62,7 @@ try {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 4000;
 
   console.log("Starting server in mode:", process.env.NODE_ENV || "development");
 
@@ -273,7 +273,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

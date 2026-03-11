@@ -94,6 +94,15 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBlockEvent, setSelectedBlockEvent] = useState<BlockEvent | null>(null);
 
+  // Extract unique devices from logs
+  const connectedDevices = useMemo(() => {
+    const devices = new Set<string>();
+    logs.forEach(log => {
+      if (log.app_name) devices.add(log.app_name);
+    });
+    return Array.from(devices);
+  }, [logs]);
+
   const fetchLogs = async () => {
     try {
       const res = await fetch('/api/activity');
@@ -725,11 +734,24 @@ if __name__ == "__main__":
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <StatCard label="Appareils" value={connectedDevices.length} icon={<Monitor className="text-blue-500" />} />
                   <StatCard label="Total Logs" value={logs.length} icon={<Activity className="text-emerald-500" />} />
-                  <StatCard label="Captures" value={screenshots.length} icon={<ImageIcon className="text-blue-500" />} />
+                  <StatCard label="Captures" value={screenshots.length} icon={<ImageIcon className="text-purple-500" />} />
                   <StatCard label="Dernière Activité" value={logs[0] ? new Date(logs[0].timestamp).toLocaleTimeString() : 'N/A'} icon={<Clock className="text-amber-500" />} />
                 </div>
+
+                {connectedDevices.length > 0 && (
+                  <div className="flex flex-wrap gap-3">
+                    {connectedDevices.map(device => (
+                      <div key={device} className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                        <Monitor className="w-4 h-4 text-blue-500" />
+                        <span className="text-sm font-semibold text-white">{device}</span>
+                        <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse ml-1" />
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="bg-[#111111] border border-white/5 rounded-2xl overflow-hidden">
                   <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">

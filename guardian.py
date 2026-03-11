@@ -35,10 +35,10 @@ CHILD_NAME = "Weedleay"
 
 # URL du serveur Dashboard
 APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
-APP_URL_LOCAL = "http://weedleay.local:3000"
+APP_URL_LOCAL = "http://weedleay.local:4000"
 
 # Intervalles
-INTERVAL = 30             # Secondes entre chaque rapport
+INTERVAL = 5             # Secondes entre chaque rapport
 BLOCK_CHECK_INTERVAL = 2  # Secondes entre chaque vérification
 BLOCKLIST_REFRESH = 60    # Secondes entre chaque MAJ de la blocklist
 
@@ -115,39 +115,40 @@ def uninstall_autostart():
 # ============================================================
 
 def get_active_window_info():
-    # xdotool (X11)
+    # Force DISPLAY for X11 tools
+    env = os.environ.copy()
+    if "DISPLAY" not in env: env["DISPLAY"] = ":0"
+
+    # 1. Tenter d'obtenir la fenêtre active via xdotool
     try:
         wid = subprocess.check_output(
-            ["xdotool", "getactivewindow"], stderr=subprocess.DEVNULL
+            ["xdotool", "getactivewindow"], stderr=subprocess.DEVNULL, env=env
         ).decode().strip()
         title = subprocess.check_output(
-            ["xdotool", "getwindowname", wid], stderr=subprocess.DEVNULL
+            ["xdotool", "getwindowname", wid], stderr=subprocess.DEVNULL, env=env
         ).decode().strip()
-        if title:
+        if title and title != "Sommelier":
             return wid, title
     except:
         pass
 
-    # xprop fallback
+    # 2. Scanner TOUTES les fenêtres XWayland (souvent Chrome y est même sur Wayland)
     try:
-        active = subprocess.check_output(
-            ["xprop", "-root", "_NET_ACTIVE_WINDOW"], stderr=subprocess.DEVNULL
-        ).decode()
-        match = re.search(r'window id # (0x[0-9a-fA-F]+)', active)
-        if match:
-            wid = match.group(1)
-            name_out = subprocess.check_output(
-                ["xprop", "-id", wid, "WM_NAME"], stderr=subprocess.DEVNULL
-            ).decode()
-            name_match = re.search(r'"(.+)"', name_out)
-            if name_match:
-                return wid, name_match.group(1)
+        out = subprocess.check_output(["wmctrl", "-l"], stderr=subprocess.DEVNULL, env=env).decode()
+        for line in out.splitlines():
+            # On cherche Chrome ou YouTube dans la liste des fenêtres
+            if "chrome" in line.lower() or "youtube" in line.lower() or "chromium" in line.lower():
+                parts = line.split(None, 3)
+                if len(parts) >= 4:
+                    return parts[0], parts[3]
     except:
         pass
 
-    # Processus connus
+    # 3. Processus connus (dernier recours, très générique)
     try:
-        ps = subprocess.check_output(["ps", "-eo", "comm"], stderr=subprocess.DEVNULL).decode().lower()
+        ps = subprocess.check_output(["ps", "-eo", "args"], stderr=subprocess.DEVNULL).decode().lower()
+        if "youtube" in ps: return None, "YouTube (via Navigateur)"
+        
         apps = {"chrome": "Google Chrome", "firefox": "Firefox", "chromium": "Chromium"}
         for proc, name in apps.items():
             if proc in ps:
@@ -155,7 +156,7 @@ def get_active_window_info():
     except:
         pass
 
-    return None, "Bureau Ubuntu"
+    return None, "Activité Ubuntu"
 
 
 # ============================================================
@@ -168,15 +169,22 @@ def capture_screenshot():
         try: os.remove(filename)
         except: pass
 
+    # On force le DISPLAY pour les captures
+    env = os.environ.copy()
+    if "DISPLAY" not in env:
+        env["DISPLAY"] = ":0"
+
     methods = [
-        ["gnome-screenshot", "-f", filename],
+        ["gnome-screenshot", "-f", filename], # Souvent plus fiable sur Ubuntu récent
+        ["scrot", "-z", filename],           # Scrot silencieux
         ["scrot", filename],
         ["import", "-window", "root", filename],
     ]
     for cmd in methods:
         try:
-            subprocess.run(cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10)
-            if os.path.exists(filename) and os.path.getsize(filename) > 100:
+            # Réduire le timeout pour ne pas bloquer la boucle
+            subprocess.run(cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=5, env=env)
+            if os.path.exists(filename) and os.path.getsize(filename) > 5000: # Plus de 5KB pour éviter les fichiers noirs
                 with open(filename, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode('utf-8')
                 os.remove(filename)
@@ -191,10 +199,10 @@ def capture_screenshot():
 # ============================================================
 
 def send_request(method, endpoint, json_data=None):
-    urls = [APP_URL_CLOUD, APP_URL_LOCAL, "http://localhost:3000"]
+    urls = ["http://localhost:4000", APP_URL_LOCAL, APP_URL_CLOUD]
     try:
         import socket
-        urls.append(f"http://{socket.gethostname()}.local:3000")
+        urls.append(f"http://{socket.gethostname()}.local:4000")
     except:
         pass
 
