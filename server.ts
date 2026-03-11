@@ -62,7 +62,7 @@ try {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 4000;
+  const PORT = process.env.PORT || 3000;
 
   console.log("Starting server in mode:", process.env.NODE_ENV || "development");
 

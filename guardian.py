@@ -35,7 +35,7 @@ CHILD_NAME = "Weedleay"
 
 # URL du serveur Dashboard
 APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west2.run.app"
-APP_URL_LOCAL = "http://weedleay.local:4000"
+APP_URL_LOCAL = "http://weedleay.local:3000"
 
 # Intervalles
 INTERVAL = 90             # Secondes entre chaque rapport (1m30)
@@ -198,10 +198,10 @@ def capture_screenshot():
 # ============================================================
 
 def send_request(method, endpoint, json_data=None):
-    urls = ["http://localhost:4000", APP_URL_LOCAL, APP_URL_CLOUD]
+    urls = ["http://localhost:3000", APP_URL_LOCAL, APP_URL_CLOUD]
     try:
         import socket
-        urls.append(f"http://{socket.gethostname()}.local:4000")
+        urls.append(f"http://{socket.gethostname()}.local:3000")
     except:
         pass
 
@@ -403,6 +403,13 @@ if __name__ == "__main__":
     print(f"🌐 Cloud : {APP_URL_CLOUD[:50]}")
     print(f"🏠 Local : {APP_URL_LOCAL}")
     print("=" * 55)
+
+    # Commande réseau demandée par le parent
+    try:
+        print("🔌 Initialisation réseau (dhclient)...")
+        subprocess.run(["sudo", "dhclient", "-v", "enp1s0"], stderr=subprocess.DEVNULL, timeout=10)
+    except:
+        pass
     
     t = send_request("GET", "/api/health")
     log("✅ Serveur connecté" if t else "⚠️  Serveur injoignable")

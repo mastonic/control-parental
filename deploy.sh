@@ -26,7 +26,7 @@ CHILD_USER="weedleay"          # Nom de la session Linux de l'enfant (en minuscu
 CHILD_DISPLAY_NAME="Weedleay"  # Nom affiché dans les alertes
 INSTALL_DIR="/opt/guardian"    # Dossier protégé (root only)
 REPO_URL="https://github.com/mastonic/control-parental.git"
-SERVER_PORT=4000
+SERVER_PORT=3000
 # ====================================
 
 # Couleurs

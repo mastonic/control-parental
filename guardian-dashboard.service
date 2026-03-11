@@ -1,0 +1,16 @@
+[Unit]
+Description=Guardian Parental Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/guardian
+ExecStart=/usr/bin/node node_modules/.bin/tsx server.ts
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+[Install]
+WantedBy=multi-user.target
