@@ -38,7 +38,7 @@ APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west
 APP_URL_LOCAL = "http://weedleay.local:4000"
 
 # Intervalles
-INTERVAL = 5             # Secondes entre chaque rapport
+INTERVAL = 90             # Secondes entre chaque rapport (1m30)
 BLOCK_CHECK_INTERVAL = 2  # Secondes entre chaque vérification
 BLOCKLIST_REFRESH = 60    # Secondes entre chaque MAJ de la blocklist
 
@@ -175,9 +175,8 @@ def capture_screenshot():
         env["DISPLAY"] = ":0"
 
     methods = [
-        ["gnome-screenshot", "-f", filename], # Souvent plus fiable sur Ubuntu récent
-        ["scrot", "-z", filename],           # Scrot silencieux
-        ["scrot", filename],
+        ["gnome-screenshot", "--no-effects", "-f", filename], # Pas de flash, pas de son
+        ["scrot", "-z", filename],                            # Mode silencieux
         ["import", "-window", "root", filename],
     ]
     for cmd in methods:
