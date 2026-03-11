@@ -327,7 +327,10 @@ def block_loop():
                 
             title_lower = title.lower()
             for keyword in blocklist:
-                if keyword in title_lower:
+                # Si le keyword commence par @, on teste aussi sans le @ (pour les handles YouTube)
+                search_kw = keyword[1:] if keyword.startswith("@") else keyword
+                
+                if search_kw in title_lower:
                     log(f"🚫 BLOQUÉ : '{keyword}' dans '{title[:50]}'")
                     
                     # 1. Capturer la preuve AVANT de bloquer
