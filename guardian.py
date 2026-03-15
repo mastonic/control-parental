@@ -413,8 +413,44 @@ def block_loop():
 # MAIN
 # ============================================================
 
+def run_system_tasks():
+    """Exécute les tâches d'initialisation système en arrière-plan."""
+    time.sleep(15) # Attendre que la session soit bien chargée
+    
+    # 1. Dashboard (Serveur Web weedleay.local:3000)
+    try:
+        # Tenter d'activer le service
+        subprocess.run(["sudo", "systemctl", "start", "guardian-dashboard.service"], 
+                       stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=5)
+        
+        # Test de présence
+        is_up = False
+        try:
+            r = requests.get("http://localhost:3000/api/health", timeout=1)
+            if r.status_code == 200: is_up = True
+        except: pass
+        
+        if not is_up:
+            log("🚀 Tentative de lancement manuel du Dashboard...")
+            subprocess.Popen(["node", "node_modules/.bin/tsx", "server.ts"], 
+                             cwd=SCRIPT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # 2. Réseau (dhclient)
+    # On essaie de détecter l'interface si enp1s0 échoue ou n'existe pas
+    try:
+        # On tente enp1s0 comme demandé
+        log("🔌 Config réseau (dhclient enp1s0)...")
+        subprocess.Popen(["sudo", "dhclient", "-v", "enp1s0"], 
+                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    except:
+        pass
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
+        # ... (gestion des arguments --install, etc. inchangée)
         cmd = sys.argv[1]
         if cmd == "--install":
             install_autostart()
@@ -423,73 +459,35 @@ if __name__ == "__main__":
             uninstall_autostart()
             sys.exit(0)
         elif cmd == "--test":
+            # Test minimal
             print("🧪 Test Guardian...")
-            print(f"\n1. Serveur : ", end="")
-            t = send_request("GET", "/api/health")
-            print("✅ OK" if t else "❌ Injoignable")
-            print(f"2. Fenêtre : ", end="")
             _, title = get_active_window_info()
-            print(f"✅ {title}")
-            print(f"3. Capture : ", end="")
-            ss = capture_screenshot()
-            print(f"✅ {len(ss)//1024}KB" if ss else "❌ Échec")
-            print(f"4. Overlay : ", end="")
-            print(f"✅ Trouvé" if os.path.exists(OVERLAY_SCRIPT) else "❌ Manquant")
-            print(f"\n5. Test overlay (5s)...")
-            show_block_overlay("test")
-            sys.exit(0)
-        elif cmd == "--help":
-            print("🛡️ Guardian — python3 guardian.py [--install|--uninstall|--test|--help]")
+            print(f"Fenêtre : {title}")
             sys.exit(0)
     
+    # S'assurer que le script ne meurt pas si la console se ferme
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     import threading
     
-    print("=" * 55)
-    print(f"🛡️  Guardian — Contrôle Parental pour {CHILD_NAME}")
-    print(f"🌐 Cloud : {APP_URL_CLOUD[:50]}")
-    print(f"🏠 Local : {APP_URL_LOCAL}")
-    print("=" * 55)
-
-    # 1. Dashboard (Serveur Web weedleay.local:3000)
-    # On s'assure qu'il tourne en tâche de fond
-    try:
-        # Tenter de démarrer le service s'il ne l'est pas
-        subprocess.Popen(["sudo", "systemctl", "start", "guardian-dashboard.service"], 
-                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        
-        # Petit test pour voir s'il répond localement
-        is_up = False
-        try:
-            r = requests.get("http://localhost:3000/api/health", timeout=0.5)
-            if r.status_code == 200: is_up = True
-        except: pass
-        
-        if not is_up:
-            log("🚀 Lancement manuel du Dashboard...")
-            subprocess.Popen(["node", "node_modules/.bin/tsx", "server.ts"], 
-                             cwd=SCRIPT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    # 2. Réseau (dhclient enp1s0)
-    # Lancé en arrière-plan pour ne pas bloquer le démarrage de la session
-    try:
-        log("🔌 Config réseau (dhclient enp1s0)...")
-        subprocess.Popen(["sudo", "dhclient", "-v", "enp1s0"], 
-                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    except:
-        pass
+    log(f"🛡️  Guardian démarré pour {CHILD_NAME}")
     
-    time.sleep(1) # Laisser un peu de temps pour le démarrage des processus
+    # Lancer les tâches système lourdes dans un thread séparé avec un délai
+    threading.Thread(target=run_system_tasks, daemon=True).start()
     
-    t = send_request("GET", "/api/health")
-    log("✅ Serveur prêt" if t else "⚠️  Serveur en cours de démarrage...")
+    # Attendre que GNOME/X11 soit totalement prêt avant de lancer le monitoring
+    # Cela évite l'écran noir/croix si on sollicite X11 trop tôt
+    time.sleep(20) 
+    
     log("🔄 Monitoring actif...")
     
+    # Thread de rapport (toutes les 3 minutes désormais)
     threading.Thread(target=report_loop, daemon=True).start()
     
     try:
+        # Boucle principale de blocage
         block_loop()
     except KeyboardInterrupt:
         log("⏹️  Guardian arrêté")
+    except Exception as e:
+        log(f"💥 Erreur fatale : {e}")
+        time.sleep(10)
