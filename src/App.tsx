@@ -183,6 +183,20 @@ export default function App() {
     fetchBlocklist();
   };
 
+  const removeScreenshot = async (id: number) => {
+    if (!confirm('Supprimer cette capture ?')) return;
+    await fetch(`/api/screenshots/${id}`, { method: 'DELETE' });
+    if (selectedScreenshot?.id === id) setSelectedScreenshot(null);
+    fetchScreenshots();
+  };
+
+  const removeBlockEvent = async (id: number) => {
+    if (!confirm('Supprimer cet événement ?')) return;
+    await fetch(`/api/block-events/${id}`, { method: 'DELETE' });
+    if (selectedBlockEvent?.id === id) setSelectedBlockEvent(null);
+    fetchBlockEvents();
+  };
+
   // Find closest screenshot to a given activity timestamp
   const findClosestScreenshot = (logTimestamp: string): Screenshot | null => {
     if (screenshots.length === 0) return null;
@@ -512,12 +526,21 @@ if __name__ == "__main__":
             onClick={() => setSelectedScreenshot(null)}
           >
             {/* Close button */}
-            <button
-              onClick={() => setSelectedScreenshot(null)}
-              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
-            >
-              <X className="w-5 h-5 text-white" />
-            </button>
+            <div className="absolute top-6 right-6 flex items-center gap-3 z-10">
+              <button
+                onClick={(e) => { e.stopPropagation(); removeScreenshot(selectedScreenshot.id); }}
+                className="p-3 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all border border-red-500/30"
+                title="Supprimer la capture"
+              >
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </button>
+              <button
+                onClick={() => setSelectedScreenshot(null)}
+                className="p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
 
             {/* Timestamp badge */}
             <div className="absolute top-6 left-6 px-4 py-2 bg-white/10 backdrop-blur-md rounded-full text-sm text-white font-medium z-10">
@@ -596,9 +619,18 @@ if __name__ == "__main__":
                     </p>
                   </div>
                 </div>
-                <button onClick={() => setSelectedBlockEvent(null)} className="p-2 hover:bg-white/10 rounded-full transition-all">
-                  <X className="w-5 h-5 text-zinc-400" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeBlockEvent(selectedBlockEvent.id); }}
+                    className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-red-500 transition-all"
+                    title="Supprimer cet événement"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => setSelectedBlockEvent(null)} className="p-2 hover:bg-white/10 rounded-full transition-all">
+                    <X className="w-5 h-5 text-zinc-400" />
+                  </button>
+                </div>
               </div>
 
               {/* Screenshot */}
@@ -872,10 +904,16 @@ if __name__ == "__main__":
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                             referrerPolicy="no-referrer"
                           />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                            <button className="w-full py-2 bg-white/10 backdrop-blur-md rounded-lg text-xs font-bold text-white flex items-center justify-center gap-2 hover:bg-white/20 transition-all">
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4 gap-2">
+                            <button className="flex-1 py-2 bg-white/10 backdrop-blur-md rounded-lg text-xs font-bold text-white flex items-center justify-center gap-2 hover:bg-white/20 transition-all">
                               <ZoomIn className="w-3 h-3" />
-                              Voir en plein écran
+                              Voir
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeScreenshot(ss.id); }}
+                              className="p-2 bg-red-500/20 backdrop-blur-md rounded-lg text-red-500 hover:bg-red-500/40 transition-all"
+                            >
+                              <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
                           {/* Index badge */}

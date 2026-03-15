@@ -102,11 +102,11 @@ ok "Session enfant trouvée : $CHILD_USER ($CHILD_HOME)"
 # ============================================================
 # ÉTAPE 1 : Dépendances système
 # ============================================================
-step "Étape 1/8 — Dépendances système"
+step "Étape 1/9 — Dépendances système"
 
 sudo apt update -qq 2>/dev/null || true
 
-PACKAGES="xdotool gnome-screenshot zenity python3-requests python3-tk git curl nodejs npm"
+PACKAGES="xdotool gnome-screenshot zenity python3-requests python3-tk git curl nodejs npm nmap"
 for pkg in $PACKAGES; do
     if dpkg -s "$pkg" &>/dev/null 2>&1; then
         ok "$pkg ✓"
@@ -117,9 +117,41 @@ for pkg in $PACKAGES; do
 done
 
 # ============================================================
-# ÉTAPE 2 : Node.js (version récente si nécessaire)
+# ÉTAPE 2 : Diagnostic Réseau & Agent
 # ============================================================
-step "Étape 2/8 — Node.js"
+step "Étape 2/9 — Diagnostic Réseau & Agent"
+
+info "Scan du réseau local pour détecter weedleay.local..."
+# On attend un peu que nmap soit bien dispo si on vient de l'installer
+if command -v nmap &>/dev/null; then
+    if nmap -sn weedleay.local 2>/dev/null | grep -q "Host is up"; then
+        ok "Le PC weedleay.local est BIEN connecté au réseau."
+    else
+        warn "Le PC weedleay.local semble injoignable via nmap."
+        # Fallback ping
+        if ping -c 1 weedleay.local &>/dev/null; then
+            ok "Le PC weedleay.local répond toutefois au ping."
+        fi
+    fi
+else
+    if ping -c 1 weedleay.local &>/dev/null; then
+        ok "Le PC weedleay.local est bien connecté (ping OK)."
+    else
+        warn "Impossible de pinger weedleay.local. Vérifiez la connexion réseau."
+    fi
+fi
+
+info "Vérification de l'agent Guardian (guardian.py)..."
+if pgrep -f "guardian.py" > /dev/null; then
+    ok "L'agent guardian.py est en cours d'exécution."
+else
+    warn "L'agent guardian.py n'est PAS lancé sur cette machine."
+fi
+
+# ============================================================
+# ÉTAPE 3 : Node.js (version récente si nécessaire)
+# ============================================================
+step "Étape 3/9 — Node.js"
 
 # Vérifier si Node.js est assez récent (v18+)
 NODE_OK=false
@@ -142,9 +174,9 @@ if [ "$NODE_OK" = false ]; then
 fi
 
 # ============================================================
-# ÉTAPE 3 : Installation des fichiers dans /opt/guardian
+# ÉTAPE 4 : Installation des fichiers dans /opt/guardian
 # ============================================================
-step "Étape 3/8 — Installation des fichiers"
+step "Étape 4/9 — Installation des fichiers"
 
 # Créer le dossier protégé
 sudo mkdir -p "$INSTALL_DIR"
@@ -169,9 +201,9 @@ else
 fi
 
 # ============================================================
-# ÉTAPE 4 : Dépendances Node.js
+# ÉTAPE 5 : Dépendances Node.js
 # ============================================================
-step "Étape 4/8 — Dépendances Node.js + Build"
+step "Étape 5/9 — Dépendances Node.js + Build"
 
 cd "$INSTALL_DIR"
 sudo npm install --silent 2>/dev/null
@@ -198,9 +230,9 @@ else
 fi
 
 # ============================================================
-# ÉTAPE 5 : Service système pour le Dashboard (systemd)
+# ÉTAPE 6 : Service système pour le Dashboard (systemd)
 # ============================================================
-step "Étape 5/8 — Service Dashboard (systemd)"
+step "Étape 6/9 — Service Dashboard (systemd)"
 
 # Trouver le chemin complet de node
 NODE_PATH=$(which node)
@@ -277,9 +309,9 @@ else
 fi
 
 # ============================================================
-# ÉTAPE 6 : Agent Guardian dans la session de l'enfant
+# ÉTAPE 7 : Agent Guardian dans la session de l'enfant
 # ============================================================
-step "Étape 6/8 — Agent Guardian pour la session $CHILD_DISPLAY_NAME"
+step "Étape 7/9 — Agent Guardian pour la session $CHILD_DISPLAY_NAME"
 
 CHILD_AUTOSTART_DIR="$CHILD_HOME/.config/autostart"
 sudo mkdir -p "$CHILD_AUTOSTART_DIR"
@@ -336,9 +368,33 @@ else
 fi
 
 # ============================================================
-# ÉTAPE 7 : Protection des fichiers
+# ÉTAPE 8.5 : Autorisations Sudoers (pour dhclient et dashboard)
 # ============================================================
-step "Étape 7/8 — Protection contre la suppression"
+step "Étape 8.5/9 — Autorisations Sudoers"
+
+SUDOERS_FILE="/etc/sudoers.d/guardian-$CHILD_USER"
+info "Création de la règle sudoers pour $CHILD_USER..."
+
+# Chemins des commandes
+CMD_DHCLIENT=$(which dhclient 2>/dev/null || echo "/usr/sbin/dhclient")
+CMD_SYSTEMCTL=$(which systemctl 2>/dev/null || echo "/usr/bin/systemctl")
+
+# Créer le fichier sudoers
+sudo tee "$SUDOERS_FILE" > /dev/null << SUDOERS_EOF
+# Autorisations Guardian pour $CHILD_USER
+$CHILD_USER ALL=(ALL) NOPASSWD: $CMD_DHCLIENT -v enp1s0
+$CHILD_USER ALL=(ALL) NOPASSWD: $CMD_SYSTEMCTL start guardian-dashboard.service
+$CHILD_USER ALL=(ALL) NOPASSWD: $CMD_SYSTEMCTL restart guardian-dashboard.service
+SUDOERS_EOF
+
+# Protection du fichier sudoers
+sudo chmod 440 "$SUDOERS_FILE"
+ok "Sudoers configuré pour $CHILD_USER"
+
+# ============================================================
+# ÉTAPE 8 : Protection des fichiers
+# ============================================================
+step "Étape 8/9 — Protection contre la suppression"
 
 # D'abord, retirer TOUS les flags immutables (au cas où une précédente exécution les a posés)
 info "Déverrouillage complet avant re-protection..."
@@ -372,9 +428,9 @@ done
 ok "Fichiers protégés (l'enfant ne peut pas les supprimer)"
 
 # ============================================================
-# ÉTAPE 8 : Vérification finale
+# ÉTAPE 9 : Vérification finale
 # ============================================================
-step "Étape 8/8 — Vérification"
+step "Étape 9/9 — Vérification"
 
 # Tester le serveur
 sleep 2
@@ -390,7 +446,7 @@ HOSTNAME_LOCAL=$(hostname)
 
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}${GREEN}🎉 Installation terminée avec succès !${NC}                  ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}🎉 Installation et Scan terminés !${NC}               ${CYAN}║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║${NC}                                                          ${CYAN}║${NC}"
 echo -e "${CYAN}║${NC}  ${BOLD}👤 Session enfant :${NC} ${YELLOW}$CHILD_USER${NC}"

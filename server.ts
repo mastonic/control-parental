@@ -98,7 +98,7 @@ async function startServer() {
   app.get(["/api/screenshots", "/api/screenshots/"], (req, res) => {
     console.log("Fetching screenshots...");
     try {
-      const shots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC LIMIT 50").all();
+      const shots = db.prepare("SELECT * FROM screenshots ORDER BY timestamp DESC").all();
       res.json(shots || []);
     } catch (err) {
       console.error("Database error in /api/screenshots:", err);
@@ -126,7 +126,6 @@ async function startServer() {
       }
       if (screenshot) {
         db.prepare("INSERT INTO screenshots (image_data) VALUES (?)").run(screenshot);
-        db.prepare("DELETE FROM screenshots WHERE id NOT IN (SELECT id FROM screenshots ORDER BY timestamp DESC LIMIT 50)").run();
       }
       res.json({ status: "ok" });
     } catch (err) {
@@ -154,6 +153,15 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/screenshots/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM screenshots WHERE id = ?").run(req.params.id);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Delete failed" });
+    }
+  });
+
   // Block events (historique des blocages)
   app.get(["/api/block-events", "/api/block-events/"], (req, res) => {
     try {
@@ -170,12 +178,19 @@ async function startServer() {
     try {
       db.prepare("INSERT INTO block_events (window_title, keyword, screenshot) VALUES (?, ?, ?)")
         .run(window_title || "Unknown", keyword || "Unknown", screenshot || null);
-      // Garder max 100 événements
-      db.prepare("DELETE FROM block_events WHERE id NOT IN (SELECT id FROM block_events ORDER BY timestamp DESC LIMIT 100)").run();
       res.json({ status: "ok" });
     } catch (err) {
       console.error("Block event error:", err);
       res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  app.delete("/api/block-events/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM block_events WHERE id = ?").run(req.params.id);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Delete failed" });
     }
   });
 

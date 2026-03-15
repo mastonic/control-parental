@@ -245,21 +245,42 @@ def show_block_overlay(keyword):
             f"--text=<span size='xx-large' color='red'><b>{CHILD_NAME},\ntu n'as pas le droit\nde regarder ça !</b></span>\n\nContenu bloqué : {keyword}\n\nDemande à tes parents.",
             "--width=500", "--timeout=15"
         ], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+        # Couper le son immédiatement
+        try:
+            subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1"], stderr=subprocess.DEVNULL)
+            subprocess.run(["amixer", "set", "Master", "mute"], stderr=subprocess.DEVNULL)
+        except:
+            pass
+            
         return True
     except:
         return False
 
 
 def close_window(window_id):
-    """Ferme la fenêtre bloquée."""
+    """Ferme la fenêtre bloquée et tente de tuer le processus."""
     if not window_id:
         return
     try:
+        # Obtenir le PID associé à la fenêtre avant de la fermer
+        pid = None
+        try:
+            pid = subprocess.check_output(["xdotool", "getwindowpid", window_id], stderr=subprocess.DEVNULL).decode().strip()
+        except:
+            pass
+
+        # 1. Tenter de minimiser et fermer proprement
         subprocess.run(["xdotool", "windowminimize", window_id], 
                        stderr=subprocess.DEVNULL, timeout=2)
-        time.sleep(0.5)
+        time.sleep(0.2)
         subprocess.run(["xdotool", "windowclose", window_id], 
                        stderr=subprocess.DEVNULL, timeout=2)
+        
+        # 2. Si on a un PID, on tue le processus pour arrêter le flux (vidéo/audio)
+        if pid:
+            time.sleep(0.5)
+            subprocess.run(["kill", "-9", pid], stderr=subprocess.DEVNULL)
     except:
         try:
             subprocess.run(["wmctrl", "-ic", window_id], 
@@ -356,8 +377,15 @@ def block_loop():
                     # 5. Fermer la fenêtre interdite
                     close_window(wid)
                     
-                    # 6. Pause pour éviter les boucles rapides
-                    time.sleep(3)
+                    # 6. Attendre que l'alerte se termine (environ 15s) puis remettre le son
+                    time.sleep(15)
+                    try:
+                        subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"], stderr=subprocess.DEVNULL)
+                        subprocess.run(["amixer", "set", "Master", "unmute"], stderr=subprocess.DEVNULL)
+                    except:
+                        pass
+                    
+                    time.sleep(1)
                     break
                     
         except Exception as e:
@@ -407,16 +435,41 @@ if __name__ == "__main__":
     print(f"🏠 Local : {APP_URL_LOCAL}")
     print("=" * 55)
 
-    # Commande réseau demandée par le parent
+    # 1. Dashboard (Serveur Web weedleay.local:3000)
+    # On s'assure qu'il tourne en tâche de fond
     try:
-        print("🔌 Initialisation réseau (dhclient)...")
-        subprocess.run(["sudo", "dhclient", "-v", "enp1s0"], stderr=subprocess.DEVNULL, timeout=10)
+        # Tenter de démarrer le service s'il ne l'est pas
+        subprocess.Popen(["sudo", "systemctl", "start", "guardian-dashboard.service"], 
+                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        
+        # Petit test pour voir s'il répond localement
+        is_up = False
+        try:
+            r = requests.get("http://localhost:3000/api/health", timeout=0.5)
+            if r.status_code == 200: is_up = True
+        except: pass
+        
+        if not is_up:
+            log("🚀 Lancement manuel du Dashboard...")
+            subprocess.Popen(["node", "node_modules/.bin/tsx", "server.ts"], 
+                             cwd=SCRIPT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # 2. Réseau (dhclient enp1s0)
+    # Lancé en arrière-plan pour ne pas bloquer le démarrage de la session
+    try:
+        log("🔌 Config réseau (dhclient enp1s0)...")
+        subprocess.Popen(["sudo", "dhclient", "-v", "enp1s0"], 
+                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     except:
         pass
     
+    time.sleep(1) # Laisser un peu de temps pour le démarrage des processus
+    
     t = send_request("GET", "/api/health")
-    log("✅ Serveur connecté" if t else "⚠️  Serveur injoignable")
-    log("🔄 Monitoring démarré...")
+    log("✅ Serveur prêt" if t else "⚠️  Serveur en cours de démarrage...")
+    log("🔄 Monitoring actif...")
     
     threading.Thread(target=report_loop, daemon=True).start()
     
