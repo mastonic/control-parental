@@ -123,14 +123,35 @@ async function startServer() {
       if (window_title || app_name) {
         db.prepare("INSERT INTO activity (window_title, app_name) VALUES (?, ?)")
           .run(window_title || "Unknown", app_name || "Unknown");
+        
+        // Rolling limit for activity logs (keep last 1000)
+        const activityCount = db.prepare("SELECT COUNT(*) as count FROM activity").get().count;
+        if (activityCount > 1000) {
+          db.prepare("DELETE FROM activity WHERE id IN (SELECT id FROM activity ORDER BY timestamp ASC LIMIT ?)").run(activityCount - 1000);
+        }
       }
       if (screenshot) {
         db.prepare("INSERT INTO screenshots (image_data) VALUES (?)").run(screenshot);
+        
+        // Rolling limit for screenshots (keep last 250 as requested)
+        const shotCount = db.prepare("SELECT COUNT(*) as count FROM screenshots").get().count;
+        if (shotCount > 250) {
+          db.prepare("DELETE FROM screenshots WHERE id IN (SELECT id FROM screenshots ORDER BY timestamp ASC LIMIT ?)").run(shotCount - 250);
+        }
       }
       res.json({ status: "ok" });
     } catch (err) {
       console.error("Report error:", err);
       res.status(500).json({ error: "Report failed" });
+    }
+  });
+
+  app.delete(["/api/screenshots", "/api/screenshots/"], (req, res) => {
+    try {
+      db.prepare("DELETE FROM screenshots").run();
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to clear screenshots" });
     }
   });
 

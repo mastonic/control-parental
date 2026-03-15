@@ -167,6 +167,13 @@ export default function App() {
     }
   };
 
+  const clearScreenshots = async () => {
+    if (confirm('Voulez-vous supprimer toutes les captures d\'écran ?')) {
+      await fetch('/api/screenshots', { method: 'DELETE' });
+      fetchScreenshots();
+    }
+  };
+
   const addBlock = async () => {
     if (!newKeyword.trim()) return;
     await fetch('/api/blocklist', {
@@ -874,8 +881,17 @@ if __name__ == "__main__":
                   </div>
                   <div className="flex items-center gap-2 px-4 py-3 bg-[#111111] border border-white/5 rounded-xl text-xs text-zinc-400">
                     <ImageIcon className="w-4 h-4 text-blue-500" />
-                    <span className="font-bold text-white">{filteredScreenshots.length}</span> captures
+                    <span className="font-bold text-white">{filteredScreenshots.length}</span> captures / 250
                   </div>
+                  {screenshots.length > 0 && (
+                    <button
+                      onClick={clearScreenshots}
+                      className="flex items-center gap-2 px-4 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-bold text-red-500 transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Tout vider
+                    </button>
+                  )}
                 </div>
 
                 {/* Gallery Grid */}
