@@ -38,7 +38,7 @@ APP_URL_CLOUD = "https://ais-pre-lt4gktee4esrepuh6d3ba3-243249280853.europe-west
 APP_URL_LOCAL = "http://weedleay.local:3000"
 
 # Intervalles
-INTERVAL = 90             # Secondes entre chaque rapport (1m30)
+INTERVAL = 180             # Secondes entre chaque rapport (3 minutes)
 BLOCK_CHECK_INTERVAL = 2  # Secondes entre chaque vérification
 BLOCKLIST_REFRESH = 60    # Secondes entre chaque MAJ de la blocklist
 
@@ -157,6 +157,23 @@ def get_active_window_info():
         pass
 
     return None, "Activité Ubuntu"
+
+
+def get_all_windows_info():
+    """Récupère la liste de toutes les fenêtres ouvertes (ID et Titre)."""
+    env = os.environ.copy()
+    if "DISPLAY" not in env: env["DISPLAY"] = ":0"
+    windows = []
+    try:
+        # wmctrl -l liste toutes les fenêtres gérées par le gestionnaire de fenêtres
+        out = subprocess.check_output(["wmctrl", "-l"], stderr=subprocess.DEVNULL, env=env).decode()
+        for line in out.splitlines():
+            parts = line.split(None, 3) # ID, Bureau, Machine, Titre
+            if len(parts) >= 4:
+                windows.append((parts[0], parts[3]))
+    except:
+        pass
+    return windows
 
 
 # ============================================================
@@ -341,52 +358,51 @@ def block_loop():
                 time.sleep(BLOCK_CHECK_INTERVAL)
                 continue
 
-            wid, title = get_active_window_info()
-            if not wid or not title:
-                time.sleep(BLOCK_CHECK_INTERVAL)
-                continue
+            # Scanner TOUTES les fenêtres (pas seulement l'active)
+            # Ça permet de lire les titres des onglets actifs de chaque fenêtre Chromium ouverte
+            windows_to_check = get_all_windows_info()
+            
+            # Récupérer l'active spécifiquement via xdotool (plus réactif)
+            active_wid, active_title = get_active_window_info()
+            if active_wid and not any(w[0] == active_wid for w in windows_to_check):
+                windows_to_check.append((active_wid, active_title))
+
+            found_violation = False
+            for wid, title in windows_to_check:
+                if found_violation: break
                 
-            title_lower = title.lower()
-            for keyword in blocklist:
-                # Si le keyword commence par @, on teste aussi sans le @ (pour les handles YouTube)
-                search_kw = keyword[1:] if keyword.startswith("@") else keyword
-                
-                if search_kw in title_lower:
-                    log(f"🚫 BLOQUÉ : '{keyword}' dans '{title[:50]}'")
+                title_lower = title.lower()
+                for keyword in blocklist:
+                    # Si le keyword commence par @, on teste aussi sans le @
+                    search_kw = keyword[1:] if keyword.startswith("@") else keyword
                     
-                    # 1. Capturer la preuve AVANT de bloquer
-                    evidence = capture_screenshot()
-                    
-                    # 2. Envoyer le rapport de blocage au serveur
-                    try:
-                        send_request("POST", "/api/block-event", {
-                            "window_title": title,
-                            "keyword": keyword,
-                            "screenshot": evidence
-                        })
-                        log(f"   📤 Rapport de blocage envoyé")
-                    except:
-                        pass
-                    
-                    # 3. Afficher l'écran de blocage plein écran
-                    show_block_overlay(keyword)
-                    
-                    # 4. Petite pause pour que l'overlay apparaisse au-dessus
-                    time.sleep(0.5)
-                    
-                    # 5. Fermer la fenêtre interdite
-                    close_window(wid)
-                    
-                    # 6. Attendre que l'alerte se termine (environ 15s) puis remettre le son
-                    time.sleep(15)
-                    try:
-                        subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"], stderr=subprocess.DEVNULL)
-                        subprocess.run(["amixer", "set", "Master", "unmute"], stderr=subprocess.DEVNULL)
-                    except:
-                        pass
-                    
-                    time.sleep(1)
-                    break
+                    if search_kw in title_lower:
+                        log(f"🚫 BLOQUÉ : '{keyword}' détecté dans '{title[:50]}'")
+                        
+                        # 1. Capturer la preuve
+                        evidence = capture_screenshot()
+                        
+                        # 2. Rapport
+                        try:
+                            send_request("POST", "/api/block-event", {
+                                "window_title": title,
+                                "keyword": keyword,
+                                "screenshot": evidence
+                            })
+                        except: pass
+                        
+                        # 3. Overlay & Fermeture
+                        show_block_overlay(keyword)
+                        time.sleep(0.5)
+                        close_window(wid)
+                        
+                        found_violation = True
+                        time.sleep(15) 
+                        try:
+                            subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"], stderr=subprocess.DEVNULL)
+                            subprocess.run(["amixer", "set", "Master", "unmute"], stderr=subprocess.DEVNULL)
+                        except: pass
+                        break
                     
         except Exception as e:
             log(f"Erreur blocage : {e}")
